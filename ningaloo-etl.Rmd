@@ -1,0 +1,52 @@
+---
+title: "Ningaloo ETL"
+author: "Florian Mayer"
+date: "4 July 2016"
+output: html_document
+---
+
+# Install
+Install required packages by running `setup.R` once in your Ubuntu environment.
+```{r, eval=FALSE}
+system("sudo apt-get install mdbtools")
+install.packages(c("Hmisc", "dplyr", "devtools"))
+devtools::install_github("ropensci/ckanr")
+```
+
+# Setup
+Configure `ckanr` for use with our data catalogue.
+The file `setup_ckanr.R` contains the confidential CKAN API key, which gives
+the owner's write permissions: `ckanr::ckanr_setup(url=CKAN, key=APIKEY)`.
+
+Create your own `setup_ckanr.R` from the template `setup_ckanr_template.R`.
+
+```{r}
+require(Hmisc)
+require(dplyr)
+require(ckanr)
+source("setup_ckanr.R")
+```
+
+# Extract data
+Donwload and open the Access mdb file from the data catalogue.
+```{r, echo=T}
+temp <- tempfile()
+download.file(resource_show(MDB_RID)$url,temp)
+con <- mdb.get(temp, dateformat='%Y-%m-%d')
+glimpse(con$tblDBAreaSurveyed)
+```
+
+# Transform
+TODO: flatten raw data, replicate views
+
+# Load
+Upload the output to the data catalogue.
+```{r}
+# ckanr::resource_update(ETL_RID, path="ningaloo-etl.html")
+```
+
+# Cleanup
+Close the temporary file.
+```{r}
+unlink(temp)
+```
