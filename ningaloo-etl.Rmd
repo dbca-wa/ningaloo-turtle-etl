@@ -23,21 +23,96 @@ Create your own `setup_ckanr.R` from the template `setup_ckanr_template.R`.
 ```{r}
 require(Hmisc)
 require(dplyr)
+require(lubridate)
 require(ckanr)
+require(DT)
+require(rgdal)
+require(mapview)
 source("setup_ckanr.R")
 ```
 
 # Extract data
 Donwload and open the Access mdb file from the data catalogue.
 ```{r, echo=T}
-temp <- tempfile()
-download.file(resource_show(MDB_RID)$url,temp)
-con <- mdb.get(temp, dateformat='%Y-%m-%d')
+# temp <- tempfile()
+# download.file(resource_show(MDB_RID)$url,temp)
+# con <- mdb.get(temp, dateformat='%Y-%m-%d')
+con <- mdb.get("data/ningaloov4.mdb", dateformat='%Y-%m-%d', as.is=T)
 glimpse(con$tblDBAreaSurveyed)
 ```
 
 # Transform
 TODO: flatten raw data, replicate views
+
+```{r}
+ord <- c("mdyHMS")
+tz <- "Australia/Perth"
+
+# Surveys
+as <- con$tblDBAreaSurveyed %>%
+  mutate(date.id=parse_date_time(date.id, orders=ord, tz=tz)) %>%
+  left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
+  rename(date=date.id, disturbed=txt.YesNoDist) %>%
+  select(-starts_with("Ysn.id"))
+glimpse(as)
+
+# Drop sites with missing coordinates.
+goodsites <- con$tblSections %>%
+  filter(!is.na(SubSect.NE.lat)) %>%
+  transmute(
+    id=as.numeric(SubSect.Id),
+    subsection=as.character(txtSubSection),
+    section=as.character(txtSections),
+    division=as.character(division.name),
+    center.lat=-as.numeric(SubSect.center.lat),
+    center.lon=as.numeric(SubSect.center.long),
+    sw.lon=as.numeric(SubSect.SW.long),
+    sw.lat=-as.numeric(SubSect.SW.lat),
+    ne.lon=as.numeric(SubSect.NE.long),
+    ne.lat=-as.numeric(SubSect.NE.lat),
+    se.lon=as.numeric(SubSect.NE.long),
+    se.lat=-as.numeric(SubSect.SW.lat),
+    ne.lon=as.numeric(SubSect.NE.long),
+    ne.lat=-as.numeric(SubSect.NE.lat),
+    nw.lon=as.numeric(SubSect.SW.long),
+    nw.lat=-as.numeric(SubSect.NE.lat),
+    end.lon=as.numeric(SubSect.SW.long),
+    end.lat=-as.numeric(SubSect.SW.lat)
+  )
+row.names(goodsites) <- goodsites$id
+
+# Show sites with missing coordinates
+badsites <- filter(con$tblSections, is.na(SubSect.NE.lat))
+DT::datatable(badsites)
+
+# Create a matrix with five lon/lat pairs forming closed boxes around sites as columns and sites as rows
+coords <- goodsites %>%
+  select(sw.lon, sw.lat, se.lon, se.lat, ne.lon, ne.lat, nw.lon, nw.lat, end.lon, end.lat) %>%
+  as.matrix()
+
+# Create a vector of site IDs
+ids <- goodsites %>% select(id) %>% as.matrix()
+
+# http://stackoverflow.com/a/26620550/2813717
+# Author http://stackoverflow.com/users/489704/jbaums
+
+#' Create SpatialPolygons from a vector of lon/lat coordinates (poly) and IDs
+make_polygons <- function(poly, id) {
+  Polygons(list(Polygon(matrix(poly, ncol=2, byrow=TRUE))), ID=id)
+}
+
+# Create SpatialPolygons from the coordinate and ID matrices
+wgs84 <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
+polys <- SpatialPolygons(
+  mapply(make_polygons, split(coords, row(coords)), ids), proj4string=wgs84)
+
+# Create SpatialPolygonsDataFrame from SpatialPolygons and a data.frame
+polys.df <- SpatialPolygonsDataFrame(polys, as.data.frame(goodsites))
+
+writeOGR(polys.df, "sites.geojson", layer = "geojson", driver = "GeoJSON")
+
+mapview(polys.df)
+```
 
 # Load
 Upload the output to the data catalogue.
@@ -48,5 +123,5 @@ Upload the output to the data catalogue.
 # Cleanup
 Close the temporary file.
 ```{r}
-unlink(temp)
+# unlink(temp)
 ```
