@@ -19,8 +19,8 @@ The file `setup_ckanr.R` contains the confidential CKAN API key, which gives
 the owner's write permissions: `ckanr::ckanr_setup(url=CKAN, key=APIKEY)`.
 
 Create your own `setup_ckanr.R` from the template `setup_ckanr_template.R`.
-
-```{r}
+Then, load required libraries and source `setup_ckanr.R`.
+```{r, warning=FALSE, message=FALSE}
 require(Hmisc)
 require(dplyr)
 require(lubridate)
@@ -32,31 +32,36 @@ source("setup_ckanr.R")
 ```
 
 # Extract data
-Donwload and open the Access mdb file from the data catalogue.
+Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T}
-# temp <- tempfile()
-# download.file(resource_show(MDB_RID)$url,temp)
-# con <- mdb.get(temp, dateformat='%Y-%m-%d')
-con <- mdb.get("data/ningaloov4.mdb", dateformat='%Y-%m-%d', as.is=T)
+tmp <- tempfile()
+# download.file(resource_show(MDB_RID)$url, tmp)
+# dbfile <- unzip(tmp, "ningaloov4.mdb")
+dbfile <- "data/ningaloov4.mdb"
+con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 glimpse(con$tblDBAreaSurveyed)
 ```
 
 # Transform
-TODO: flatten raw data, replicate views
 
+## Sites
+Read `tblDBAreaSurveyed`, parse date formats, infer timezone GMT+08, resolve
+lookup for Yes/No, and clean up column names.
 ```{r}
 ord <- c("mdyHMS")
 tz <- "Australia/Perth"
-
-# Surveys
 as <- con$tblDBAreaSurveyed %>%
   mutate(date.id=parse_date_time(date.id, orders=ord, tz=tz)) %>%
   left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
   rename(date=date.id, disturbed=txt.YesNoDist) %>%
   select(-starts_with("Ysn.id"))
 glimpse(as)
+```
 
-# Drop sites with missing coordinates.
+
+Drop sites with missing coordinates, and re-arrange SW and NE coordinates into 
+five coordinate pairs (SW, SE, NE, NW, and SW again to close the rectangle).
+```{r}
 goodsites <- con$tblSections %>%
   filter(!is.na(SubSect.NE.lat)) %>%
   transmute(
@@ -68,10 +73,10 @@ goodsites <- con$tblSections %>%
     center.lon=as.numeric(SubSect.center.long),
     sw.lon=as.numeric(SubSect.SW.long),
     sw.lat=-as.numeric(SubSect.SW.lat),
-    ne.lon=as.numeric(SubSect.NE.long),
-    ne.lat=-as.numeric(SubSect.NE.lat),
     se.lon=as.numeric(SubSect.NE.long),
     se.lat=-as.numeric(SubSect.SW.lat),
+    ne.lon=as.numeric(SubSect.NE.long),
+    ne.lat=-as.numeric(SubSect.NE.lat),
     ne.lon=as.numeric(SubSect.NE.long),
     ne.lat=-as.numeric(SubSect.NE.lat),
     nw.lon=as.numeric(SubSect.SW.long),
@@ -80,21 +85,36 @@ goodsites <- con$tblSections %>%
     end.lat=-as.numeric(SubSect.SW.lat)
   )
 row.names(goodsites) <- goodsites$id
+```
 
-# Show sites with missing coordinates
+On the other hand, sites with missing coordinates need to be fixed!
+```{r}
 badsites <- filter(con$tblSections, is.na(SubSect.NE.lat))
 DT::datatable(badsites)
+```
 
-# Create a matrix with five lon/lat pairs forming closed boxes around sites as columns and sites as rows
+
+Following Stackoverflow user [jbaum](http://stackoverflow.com/users/489704/jbaums)'s [example](http://stackoverflow.com/a/26620550/2813717), we create the R equivalent
+of a polygon shapefile.
+
+* `coords` is a matrix containing the five coordinate pairs (columns) for all sites (rows).
+* `ids` is a vector containing the site IDs.
+* `make_polygons` creates one `Polygon` object from a matrix of coordinates and 
+  a vector of IDs like the above.
+* With the correct projection (WGS84), `make_polygons` is vectorised (`mapply`) 
+  over all sites (rows in `coords`) to create the SpatialPolygons object `polys`.
+* Appending the site attributes (`goodsites`) to the SpatialPloygons creates a
+  SpatialPolygonsDataFrame `polys.df`, which is written to a GeoJSON file and
+  shown here on a map preview.
+
+```{r}
+# Create 
 coords <- goodsites %>%
   select(sw.lon, sw.lat, se.lon, se.lat, ne.lon, ne.lat, nw.lon, nw.lat, end.lon, end.lat) %>%
   as.matrix()
 
 # Create a vector of site IDs
 ids <- goodsites %>% select(id) %>% as.matrix()
-
-# http://stackoverflow.com/a/26620550/2813717
-# Author http://stackoverflow.com/users/489704/jbaums
 
 #' Create SpatialPolygons from a vector of lon/lat coordinates (poly) and IDs
 make_polygons <- function(poly, id) {
@@ -109,19 +129,120 @@ polys <- SpatialPolygons(
 # Create SpatialPolygonsDataFrame from SpatialPolygons and a data.frame
 polys.df <- SpatialPolygonsDataFrame(polys, as.data.frame(goodsites))
 
-writeOGR(polys.df, "sites.geojson", layer = "geojson", driver = "GeoJSON")
+# Write to GeoJSON
+writeOGR(polys.df, "data/sites.geojson", layer="geojson", driver="GeoJSON")
 
+# Preview the sites
 mapview(polys.df)
 ```
 
-# Load
-Upload the output to the data catalogue.
+
+## Surveys
+Surveys are joined to environmental condition, column names are sanitised.
 ```{r}
-# ckanr::resource_update(ETL_RID, path="ningaloo-etl.html")
+# Surveys
+surveys <- con$tblDBAreaSurveyed %>%
+  left_join(con$tblEnvironCond, by="date.id") %>%
+  left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
+  mutate(date.id=parse_date_time(date.id, orders=ord, tz=tz)) %>%
+  rename(date=date.id,
+         disturbed=txt.YesNoDist,
+         survey_id=area.svyd.id,
+         division=Divsion,
+         section=Section,
+         subsection=SubSection,
+         no_false_crawls_fox_tracks=numFalseCrawlsFoxTracks,
+         fox_tracks_present=FoxTracks,
+         dog_tracks_present=DogTracks,
+         wind_speed=wind.speed,
+         wind_direction=wind.direction,
+         air_temp=air.temp,
+         water_temp=water.temp,
+         time_of_high_tide=time.HT,
+         height_of_high_tide=hght.HT) %>%
+  left_join(goodsites, by="subsection") %>%
+  select(-starts_with("Ysn.id"))
+DT::datatable(surveys)
+```
+
+
+## Lookups
+Let's clean up the column names of lookups.
+```{r}
+# Species lookup
+species <- con$tblTurtleSpecies %>%
+  rename(species_id=Turtle.Species.ID,
+         species_name=Turtle.Species.Name)
+
+nest_types <- con$tblNestType %>%
+  rename(nest_type_id=NestTypeID, nest_type=NestType)
+
+confidence <- con$tblPosConf %>%
+  rename(confidence_id=PosConf.ID, confidence=txtPosConf)
+
+position <- con$tblProfilePos %>%
+  rename(position_id=intPosID, position=Position)
+
+yes_no <- con$tblYsnDisturbed %>%
+  rename(yes_no_id=Ysn.id, yes_no=txt.YesNoDist)
+
+track_type <- con$tblTrackType %>%
+  rename(track_id=track.id, track_origin=txtTrackName)
+```
+
+
+## Observations: False crawls
+```{r}
+crawls <- con$tblDBFalseCrawl %>%
+  rename(species_id=FalseCrawlSpecies,
+         survey_id=area.svyd.id,
+         no_false_crawls=NumberFalseCrawls,
+         crawl_id=FalseCrawlRecordID) %>%
+  left_join(species, by="species_id") %>%
+  left_join(surveys, by="survey_id")
+write.csv(crawls, file = "data/crawls.csv")
+DT::datatable(crawls)
+```
+
+## Observations: Real nests
+```{r}
+nests <- con$tblDBNestingSurvey %>%
+  rename(nest_id=NestID,
+         survey_id=area.svyd.id,
+         nest_type_id=NestType,
+         confidence_id=PosConf.ID,
+         position_id=intPosID,
+         yes_no_id=ysnNestDist.ID,
+         crawl_id=crawl.id,
+         track_id=track.id,
+         track_id2=track.id2,
+         camera_photo_no=CameraPhotoNo,
+         comments=Comments) %>%
+  left_join(nest_types, by="nest_type_id") %>%
+  left_join(confidence, by="confidence_id") %>%
+  left_join(position, by="position_id") %>%
+  left_join(yes_no, by="yes_no_id") %>%
+  left_join(track_type, by="track_id") %>%
+  left_join(surveys, by="survey_id") %>%
+  rename(disturbed_nest=yes_no) %>%
+  mutate(latitude=-as.numeric(latitude),
+         longitude=as.numeric(longitude)) %>%
+  select(-nest_type_id, -confidence_id, -position_id, -yes_no_id)
+write.csv(nests, file = "data/nests.csv")
+DT::datatable(nests)
+```
+
+# Load
+Upload outputs to CKAN.
+```{r}
+# ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
+# ckanr::resource_update(SITES_RID, path="data/sites.geojson")
+# ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
+# ckanr::resource_update(NEST_RID, "data/nests.csv")
 ```
 
 # Cleanup
 Close the temporary file.
 ```{r}
-# unlink(temp)
+unlink(tmp)
 ```
