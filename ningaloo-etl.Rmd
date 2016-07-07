@@ -35,9 +35,9 @@ source("setup_ckanr.R")
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T}
 tmp <- tempfile()
-# download.file(resource_show(MDB_RID)$url, tmp)
-# dbfile <- unzip(tmp, "ningaloov4.mdb")
-dbfile <- "data/ningaloov4.mdb"
+download.file(resource_show(MDB_RID)$url, tmp)
+dbfile <- unzip(tmp, "ningaloov4.mdb")
+# dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 glimpse(con$tblDBAreaSurveyed)
 ```
@@ -235,10 +235,10 @@ DT::datatable(nests)
 # Load
 Upload outputs to CKAN.
 ```{r}
-# ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
-# ckanr::resource_update(SITES_RID, path="data/sites.geojson")
-# ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
-# ckanr::resource_update(NEST_RID, "data/nests.csv")
+ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
+ckanr::resource_update(SITES_RID, path="data/sites.geojson")
+ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
+ckanr::resource_update(NEST_RID, "data/nests.csv")
 ```
 
 # Cleanup
