@@ -27,3 +27,6 @@ vignettes/*.pdf
 data/
 setup_ckanr.R
 ningaloo-etl.html
+sites.geojson
+sites.qgs
+ningaloov4.mdb

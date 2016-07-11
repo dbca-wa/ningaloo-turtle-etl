@@ -1,9 +1,16 @@
 ---
-title: "Ningaloo ETL"
+title: "Ningaloo Turtle Program Data ETL"
 author: "Florian Mayer"
 date: "4 July 2016"
 output: html_document
 ---
+This workbook executes and documents the extraction, transformation and loading
+(ETL) of Ningaloo Turtle Program data from the original Access database into
+accessible formats. Data are read from a snapshot on the internal data catalogue,
+processed locally, and uploaded as various outputs back to the data catalogue.
+
+**Note** The data shown are not quality controlled, and therefore could contain
+duplication or gaps. This notebook currently is a work in progress.
 
 # Install
 Install required packages by running `install.R` once in your Ubuntu environment.
@@ -32,22 +39,23 @@ source("setup_ckanr.R")
 
 # Extract data
 Download, unzip and open the Access mdb file from the data catalogue.
-```{r, echo=T}
-tmp <- tempfile()
+```{r, echo=T, message=FALSE}
+# tmp <- tempfile()
 # download.file(resource_show(MDB_RID)$url, tmp)
 # dbfile <- unzip(tmp, "ningaloov4.mdb")
 dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
-glimpse(con$tblDBAreaSurveyed)
+contents(con)
 ```
 
 # Transform
 
 ## Sites
-Read `tblSections` (sites are called "subsections" here, walkable parts of a beach).
-Drop sites with missing coordinates, and re-arrange SW and NE coordinates into 
+In `tblSections`, sites are called "subsections", representing walkable parts 
+of a beach.
+Where all coordinates are given, we'll permutate SW and NE coordinates into 
 five coordinate pairs (SW, SE, NE, NW, and SW again to close the rectangle).
-This arrangement will make it easier for us to build bounding boxes later on. 
+This arrangement will make it easier for us to build bounding boxes later on.
 ```{r}
 goodsites <- con$tblSections %>%
   filter(!is.na(SubSect.NE.lat)) %>%
@@ -74,15 +82,18 @@ goodsites <- con$tblSections %>%
 row.names(goodsites) <- goodsites$id
 ```
 
+### Sites with missing coordinates
 On the other hand, sites with missing coordinates need to be fixed!
 If there are any sites listed here, please supply the missing data, and upload
 a new .zip archive of the original Access database to the data catalogue.
 ```{r}
-badsites <- filter(con$tblSections, is.na(SubSect.NE.lat))
-DT::datatable(badsites)
+badsites <- filter(con$tblSections, 
+  is.na(SubSect.NE.lat) | is.na(SubSect.NE.long) | 
+    is.na(SubSect.SW.lat) | is.na(SubSect.SW.long))
+DT::datatable(badsites, caption="Sites with missing coordinates")
 ```
 
-
+### Shapefiles - R style
 Following Stackoverflow user [jbaum](http://stackoverflow.com/users/489704/jbaums)'s [example](http://stackoverflow.com/a/26620550/2813717), we create the R equivalent
 of a polygon shapefile.
 
@@ -134,7 +145,8 @@ Surveys are joined to environmental condition, column names are sanitised.
 Read `tblDBAreaSurveyed`, parse date formats, infer timezone GMT+08, resolve
 lookup for Yes/No, and clean up column names.
 ```{r}
-# Surveys
+ord <- c("mdyHMS")
+tz <- "Australia/Perth"
 surveys <- con$tblDBAreaSurveyed %>%
   left_join(con$tblEnvironCond, by="date.id") %>%
   left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
@@ -179,6 +191,7 @@ Munge `tblDBFalseCrawl`:
 * resolve species lookups, 
 * append survey level data, 
 * write to CSV and preview.
+
 ```{r}
 crawls <- con$tblDBFalseCrawl %>%
   rename(species_id=FalseCrawlSpecies,
@@ -199,6 +212,7 @@ Like with false crawls, munge `tblDBNestingSurvey`:
 * restore the missing negative latitude sign, 
 * append survey level data, 
 * save to CSV and preview.
+
 ```{r}
 nests <- con$tblDBNestingSurvey %>%
   rename(nest_id=NestID,
@@ -207,7 +221,7 @@ nests <- con$tblDBNestingSurvey %>%
          confidence_id=PosConf.ID,
          position_id=intPosID,
          yes_no_id=ysnNestDist.ID,
-         crawl_id=crawl.id,
+         species_id=crawl.id,
          track_id=track.id,
          track_id2=track.id2,
          camera_photo_no=CameraPhotoNo,
@@ -217,13 +231,41 @@ nests <- con$tblDBNestingSurvey %>%
   left_join(position, by="position_id") %>%
   left_join(yes_no, by="yes_no_id") %>%
   left_join(track_type, by="track_id") %>%
+  left_join(species, by="species_id") %>%
   left_join(surveys, by="survey_id") %>%
   rename(disturbed_nest=yes_no) %>%
   mutate(latitude=-as.numeric(latitude),
          longitude=as.numeric(longitude)) %>%
-  select(-nest_type_id, -confidence_id, -position_id, -yes_no_id)
+  select(-nest_type_id, -confidence_id, -position_id, -yes_no_id, -species_id)
 write.csv(nests, file = "data/nests.csv")
 DT::datatable(nests)
+```
+
+### Summary of new nests by survey
+The sum of new nests for every unique combination of survey (subsection, date)
+and species.
+```{r}
+new_nests_by_survey <- tbl_df(nests) %>%
+  filter(nest_type=="New") %>%
+  group_by(subsection, date, species_name) %>%
+  tally(sort=T) %>%
+  ungroup() %>%
+  left_join(surveys)
+write.csv(new_nests_by_survey, file = "data/new_nests_by_survey.csv")
+DT::datatable(new_nests_by_survey)
+```
+
+### False crawls by survey
+The sum of false crawls for every unique combination of survey (subsection, date)
+and species.
+```{r}
+false_crawls_by_survey <- tbl_df(crawls) %>%
+  group_by(subsection, date, species_name) %>%
+  tally(sort=T) %>%
+  ungroup() %>%
+  left_join(surveys)
+write.csv(false_crawls_by_survey, file = "data/false_crawls_by_survey.csv")
+DT::datatable(false_crawls_by_survey)
 ```
 
 # Load
@@ -238,5 +280,5 @@ Upload outputs to CKAN.
 # Cleanup
 Close the temporary file.
 ```{r}
-unlink(tmp)
+# unlink(tmp)
 ```
