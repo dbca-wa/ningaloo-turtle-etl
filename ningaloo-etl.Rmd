@@ -1,16 +1,15 @@
 ---
-title: "Ningaloo Turtle Program Data ETL"
+title: "Ningaloo Turtle Program Data Extraction, Transformation and Loading"
 author: "Florian Mayer"
 date: "4 July 2016"
 output: html_document
 ---
 This workbook executes and documents the extraction, transformation and loading
 (ETL) of Ningaloo Turtle Program data from the original Access database into
-accessible formats. Data are read from a snapshot on the internal data catalogue,
-processed locally, and uploaded as various outputs back to the data catalogue.
+accessible formats. Data are read from a snapshot of the original database on the internal data catalogue, processed locally, and uploaded as various outputs 
+back to the data catalogue.
 
-**Note** The data shown are not quality controlled, and therefore could contain
-duplication or gaps. This notebook currently is a work in progress.
+**Note** The data shown are not yet fully quality controlled, and therefore could contain duplication or gaps. This notebook currently is a work in progress.
 
 # Install
 Install required packages by running `install.R` once in your Ubuntu environment.
@@ -40,10 +39,10 @@ source("setup_ckanr.R")
 # Extract data
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T, message=FALSE}
-# tmp <- tempfile()
-# download.file(resource_show(MDB_RID)$url, tmp)
-# dbfile <- unzip(tmp, "ningaloov4.mdb")
-dbfile <- "data/ningaloov4.mdb"
+tmp <- tempfile(tmpdir="data")
+download.file(resource_show(MDB_RID)$url, tmp)
+dbfile <- unzip(tmp, "ningaloov4.mdb")
+# dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 contents(con)
 ```
@@ -57,8 +56,9 @@ Where all coordinates are given, we'll permutate SW and NE coordinates into
 five coordinate pairs (SW, SE, NE, NW, and SW again to close the rectangle).
 This arrangement will make it easier for us to build bounding boxes later on.
 ```{r}
-goodsites <- con$tblSections %>%
-  filter(!is.na(SubSect.NE.lat)) %>%
+sites <- con$tblSections %>%
+#   filter(!is.na(SubSect.NE.lat) & !is.na(SubSect.NE.long) &
+#     !is.na(SubSect.SW.lat) & !is.na(SubSect.SW.long)) %>%
   transmute(
     id=as.numeric(SubSect.Id),
     subsection=as.character(txtSubSection),
@@ -79,13 +79,20 @@ goodsites <- con$tblSections %>%
     end.lon=as.numeric(SubSect.SW.long),
     end.lat=-as.numeric(SubSect.SW.lat)
   )
-row.names(goodsites) <- goodsites$id
+row.names(sites) <- sites$id
+
+# Manually fix mising NE corner of Red Bluff
+redbluffrow <- which(sites$subsection=="Red Bluff")
+sites[redbluffrow,]$ne.lon <- 113.458
+sites[redbluffrow,]$se.lon <- 113.458
+sites[redbluffrow,]$ne.lat <- -24.016
+sites[redbluffrow,]$nw.lat <- -24.016
 ```
 
 ### Sites with missing coordinates
-On the other hand, sites with missing coordinates need to be fixed!
-If there are any sites listed here, please supply the missing data, and upload
-a new .zip archive of the original Access database to the data catalogue.
+Although we can patch the data here, sites with missing coordinates need to be fixed in the original data source!
+If there are any sites listed here, please supply the missing data in the original
+NTP access database, then zip and upload the original Access database to the data catalogue.
 ```{r}
 badsites <- filter(con$tblSections, 
   is.na(SubSect.NE.lat) | is.na(SubSect.NE.long) | 
@@ -99,14 +106,18 @@ of a polygon shapefile.
 
 `coords` is a matrix containing the five coordinate pairs (columns) for all sites (rows).
 ```{r}
-coords <- goodsites %>%
-  select(sw.lon, sw.lat, se.lon, se.lat, ne.lon, ne.lat, nw.lon, nw.lat, end.lon, end.lat) %>%
+coords <- sites %>%
+  select(sw.lon, sw.lat, 
+         se.lon, se.lat, 
+         ne.lon, ne.lat, 
+         nw.lon, nw.lat, 
+         end.lon, end.lat) %>%
   as.matrix()
 ```
 
 `ids` is a vector containing the site IDs.
 ```{r}
-ids <- goodsites %>% select(id) %>% as.matrix()
+ids <- sites %>% select(id) %>% as.matrix()
 ```
 
 `make_polygons` creates one `Polygon` object from a matrix of coordinates and a 
@@ -114,24 +125,23 @@ vector of IDs like the above.
 ```{r}
 #' Create SpatialPolygons from a vector of lon/lat coordinates (poly) and IDs
 make_polygons <- function(poly, id) {
-  Polygons(list(Polygon(matrix(poly, ncol=2, byrow=TRUE))), ID=id)
-}
+  Polygons(list(Polygon(matrix(poly, ncol=2, byrow=TRUE))), ID=id)}
 ```
 
 Create SpatialPolygons (SpatialPolygons `polys`) from the coordinates (matrix `coords`) and IDs (matrix `ids`)
 by vectorising the function `make_polygons` over all sites (one site is one row 
 in `coords`) using the correct projection (WGS84).
 ```{r}
-# 
 wgs84 <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
-polys <- SpatialPolygons(mapply(make_polygons, split(coords, row(coords)), ids), proj4string=wgs84)
+polys <- SpatialPolygons(
+  mapply(make_polygons, split(coords, row(coords)), ids), proj4string=wgs84)
 ```
 
 Create a SpatialPolygonsDataFrame `polys.df` from SpatialPolygons `polys` and a 
-data.frame `goodsites`. This is the R version of a shapefile, containing spatial
-features (`polys`) as well as text attributes (`goodsites`).
+data.frame `sites`. This is the R version of a shapefile, containing spatial
+features (`polys`) as well as text attributes (`sites`).
 ```{r}
-polys.df <- SpatialPolygonsDataFrame(polys, as.data.frame(goodsites))
+polys.df <- SpatialPolygonsDataFrame(polys, as.data.frame(sites))
 ```
 
 Write the SPDF to GeoJSON and preview them on an interactive map.
@@ -146,7 +156,7 @@ Read `tblDBAreaSurveyed`, parse date formats, infer timezone GMT+08, resolve
 lookup for Yes/No, and clean up column names.
 ```{r}
 ord <- c("mdyHMS")
-tz <- "Australia/Perth"
+tz <- "GMT"
 surveys <- con$tblDBAreaSurveyed %>%
   left_join(con$tblEnvironCond, by="date.id") %>%
   left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
@@ -166,10 +176,14 @@ surveys <- con$tblDBAreaSurveyed %>%
          water_temp=water.temp,
          time_of_high_tide=time.HT,
          height_of_high_tide=hght.HT) %>%
-  left_join(goodsites, by="subsection") %>%
+  select(-division, -section) %>%
+  left_join(sites, by="subsection") %>%
   select(-starts_with("Ysn.id"))
-write.csv(surveys, file = "data/surveys.csv")
-DT::datatable(surveys)
+write.csv(surveys, file = "data/surveys.csv", row.names=F)
+# DT::datatable(surveys)
+
+duplicated_surveys <- surveys %>% filter(duplicated(surveys$survey_id))
+# DT::datatable(duplicated_surveys, caption = "Duplicated survey IDs")
 ```
 
 
@@ -188,9 +202,13 @@ track_type <- rename(con$tblTrackType, track_id=track.id, track_origin=txtTrackN
 Munge `tblDBFalseCrawl`:
 
 * Clean up column names, 
+* drop duplicated "division" and "section",
 * resolve species lookups, 
 * append survey level data, 
 * write to CSV and preview.
+
+**QA check** 13577 observations, after joining surveys: 13798
+some crawl_ids are duplicated
 
 ```{r}
 crawls <- con$tblDBFalseCrawl %>%
@@ -199,9 +217,13 @@ crawls <- con$tblDBFalseCrawl %>%
          no_false_crawls=NumberFalseCrawls,
          crawl_id=FalseCrawlRecordID) %>%
   left_join(species, by="species_id") %>%
+  select(-species_id) %>%
   left_join(surveys, by="survey_id")
-write.csv(crawls, file = "data/crawls.csv")
-DT::datatable(crawls)
+write.csv(crawls, file = "data/crawls.csv", row.names=F)
+# DT::datatable(crawls)
+
+duplicated_crawls <- crawls %>% filter(duplicated(crawls$crawl_id))
+# DT::datatable(duplicated_crawls, caption = "Duplicated crawls")
 ```
 
 ## Observations: Real nests
@@ -236,49 +258,56 @@ nests <- con$tblDBNestingSurvey %>%
   rename(disturbed_nest=yes_no) %>%
   mutate(latitude=-as.numeric(latitude),
          longitude=as.numeric(longitude)) %>%
-  select(-nest_type_id, -confidence_id, -position_id, -yes_no_id, -species_id)
-write.csv(nests, file = "data/nests.csv")
-DT::datatable(nests)
+  select(-nest_type_id, -confidence_id, -position_id, 
+         -yes_no_id, -species_id, -track_id)
+write.csv(nests, file = "data/nests.csv", row.names=F)
+# DT::datatable(nests)
+
+duplicated_nests <- nests %>% filter(duplicated(nests$nest_id))
+# DT::datatable(duplicated_crawls, caption = "Duplicated crawls")
 ```
 
 ### Summary of new nests by survey
 The sum of new nests for every unique combination of survey (subsection, date)
 and species.
 ```{r}
-new_nests_by_survey <- tbl_df(nests) %>%
+summary_nests <- tbl_df(nests) %>%
   filter(nest_type=="New") %>%
   group_by(subsection, date, species_name) %>%
   tally(sort=T) %>%
   ungroup() %>%
   left_join(surveys)
-write.csv(new_nests_by_survey, file = "data/new_nests_by_survey.csv")
-DT::datatable(new_nests_by_survey)
+write.csv(summary_nests, file = "data/summary_nests.csv", row.names=F)
+DT::datatable(summary_nests)
 ```
 
 ### False crawls by survey
 The sum of false crawls for every unique combination of survey (subsection, date)
 and species.
 ```{r}
-false_crawls_by_survey <- tbl_df(crawls) %>%
+summary_crawls <- tbl_df(crawls) %>%
   group_by(subsection, date, species_name) %>%
   tally(sort=T) %>%
   ungroup() %>%
   left_join(surveys)
-write.csv(false_crawls_by_survey, file = "data/false_crawls_by_survey.csv")
-DT::datatable(false_crawls_by_survey)
+write.csv(summary_crawls, file = "data/summary_crawls.csv", row.names=F)
+# DT::datatable(summary_crawls)
 ```
 
 # Load
 Upload outputs to CKAN.
 ```{r}
-# ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
-# ckanr::resource_update(SITES_RID, path="data/sites.geojson")
-# ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
-# ckanr::resource_update(NEST_RID, "data/nests.csv")
+ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
+ckanr::resource_update(SITES_RID, path="data/sites.geojson")
+ckanr::resource_update(SURVEYS_RID, path="data/surveys.csv")
+ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
+ckanr::resource_update(NEST_RID, "data/nests.csv")
+ckanr::resource_update(NEW_NEST_RID, "data/summary_nests.csv")
+ckanr::resource_update(FALSE_CRAWL_RID, "data/summary_crawls.csv")
 ```
 
 # Cleanup
 Close the temporary file.
 ```{r}
-# unlink(tmp)
+unlink(tmp)
 ```
