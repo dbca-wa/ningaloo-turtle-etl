@@ -1,0 +1,239 @@
+---
+title: "Distribution and change of Ningaloo turtle nesting"
+author: "Florian Mayer"
+date: "15 July 2016"
+output: html_document
+---
+
+This document uses data from the 
+[Ningaloo Turtle Program](http://internal-data.dpaw.wa.gov.au/dataset/ningaloo-turtle-program-data),
+as supplied by the current custodian Keely Markovina.
+
+Until this notive disappears, it is a work in progress. Insight created could
+be based on wrong assuptions or missing information, and must not be used
+to inform management decisions.
+
+
+```{r, echo=F, message=F, warning=F}
+require(Hmisc)
+library(tidyr)
+require(dplyr)
+require(lubridate)
+require(ckanr)
+require(DT)
+require(mapview)
+require(vegan)
+require(scales)
+require(packfor)
+source("setup_ckanr.R")
+```
+
+# Data
+
+## Origin of data
+A snapshot of the original Access database is maintained by custodian Keely Markovina
+on the Ningaloo Turtle Program's [dataset](http://internal-data.dpaw.wa.gov.au/dataset/ningaloo-turtle-program-data),
+then the [NTP postprocessing workbook](http://internal-data.dpaw.wa.gov.au/dataset/ningaloo-turtle-program-data/resource/1df672e2-4e42-4145-8be2-40c02a8f9319)
+is run, which extracts, transforms and uploads data in accessible formats.
+
+## Loading the data
+This workbook loads the extracted and summarised data from the catalogue.
+```{r}
+nests <- read.csv(ckanr::resource_show(NEW_NEST_RID)$url, as.is=T)
+sites <- read.csv(ckanr::resource_show(SITES_CSV_RID)$url, as.is=T)
+surveys <- read.csv(ckanr::resource_show(SURVEYS_RID)$url, as.is=T)
+```
+
+## Preparing the data
+Let's use standard names for variables:
+
+* Y.in is an initial numeric data.frame of responding variables; here:
+  a survey by species matrix of nest abundance.
+* X.in is an initial numeric data.frame of environmental variables; here: 
+  all numeric variables of survey-level environmental observations.
+* Xs is a numeric data.frame of spatial lon/lat coordinates.
+* Xt is a numeric data.frame of temporal timestamps (using date as continuous number).
+* X.dates is a one-column data.frame of the dates as date objects, which will
+  come in handy to label graph axes.
+  
+```{r}
+nest <- nests %>% filter(
+  !is.na(lon), !is.na(lat), !is.na(site_disturbed),
+  !is.na(subsection), !is.na(section), !is.na(division)) %>% as.data.frame()
+X.site.xy <- sites %>% select(lon, lat) %>% as.data.frame()
+Xs <- nest %>% select(lon, lat)
+Xt <- nest %>% transmute(date=as.numeric(ymd(date)))
+X.dates <- nest %>% select(date)
+Y.in <- nest %>% select(Flatback, Green, Loggerhead, Hawksbill, Unidentified)
+X.in <- nest %>% select(no_false_crawls_fox_tracks, fox_tracks_present, dog_tracks_present, 
+  site_disturbed, wind_speed, wind_direction, air_temp, water_temp, height_of_high_tide) 
+```
+
+# Diagnostics and data treatment
+## Detect and eliminate correlated variables
+* Ploughman's plot of Y and X
+* Correlated variables will form lines
+* Uncorrelated variables will be distributed uniformly over both axes
+```{r}
+pairs(Y.in, main="Correlations between species")
+pairs(X.in, main="Correlations between environmental variables")
+```
+
+* Action: exclude one of each correlated variable pairs
+
+## Identify and treat skewness
+* Histograms of Y and X will show the distribution of variable values.
+* Expected: normal or uniform distribution.
+* Right-skewed distributions can be log-transformed.
+* Left-skewed distributions can be sqrt-transformed.
+* Sparse observations should be Hellinger-transformed to reduce false similarity 
+  between sites through shared absence (which might be undersampling rather than
+  true absence).
+  
+```{r}
+ggplot(Y.in) + geom_bar(aes(Loggerhead))
+ggplot(Y.in) + geom_bar(aes(Green))
+ggplot(Y.in) + geom_bar(aes(Flatback))
+ggplot(Y.in) + geom_bar(aes(Hawksbill))
+ggplot(Y.in) + geom_bar(aes(Unidentified))
+summary(Y.in)
+```
+
+* Let's drop Flatbacks and Unidentified, as they are too sparse, and will bias 
+  the dataset with shared absences creating false similarities between beaches.
+* Hellinger-transform the very left-skewed, sparse dataset.
+
+```{r}
+Y.sel <- select(Y.in, Green, Loggerhead, Hawksbill)
+Y.hel <- decostand(Y.sel, "hellinger")
+ggplot(Y.hel) + geom_bar(aes(Loggerhead))
+ggplot(Y.hel) + geom_bar(aes(Green))
+ggplot(Y.hel) + geom_bar(aes(Hawksbill))
+```
+The distributions are looking better now!
+
+```{r}
+ggplot(X.in) + geom_bar(aes(no_false_crawls_fox_tracks))
+ggplot(X.in) + geom_bar(aes(wind_speed))
+ggplot(X.in) + geom_bar(aes(wind_direction))
+ggplot(X.in) + geom_bar(aes(air_temp))
+ggplot(X.in) + geom_bar(aes(water_temp))
+ggplot(X.in) + geom_bar(aes(height_of_high_tide))
+summary(X.in)
+```
+
+* Variables of X.in that are all 0 carry no explanatory weight and should be excluded.
+  The histograms show variables like wind_speed with lots of 0, which in the original
+  data are NA. Unless these variables are populated comprehensively, we need to
+  omit them for now.
+* Continuous variables with different physical units (angles, velocities, 
+  temperatures) need to be ranged to [0..1] using `scales::rescale()`.
+* Binary "yes/no" variables already range from 0 to 1.
+
+Overall, only the three binary variables are useful.
+
+```{r}
+X <- X.in %>% select(site_disturbed, fox_tracks_present, dog_tracks_present)
+pairs(X)
+summary(X)
+```
+
+## Remove linear spatial trends
+Linear spatial trends indicate processes acting at a larger than detectable scale.
+Linear trends need to be removed prior to further analysis, otherwise they will
+use up the explanatory power of independent variables.
+
+We will build a Canonical Redundancy Analysis (RDA) model of responding variables
+constrained by their spatial coordinates, and work with the residuals of the model.
+
+```{r}
+Y.spatialtrend <- rda(Y.hel, Xs)
+Y <- residuals(Y.spatialtrend)
+pairs(Y)
+```
+There still seems to be a negative correlation between the abundance of Green vs.
+Loggerhead turtle nests.
+
+# Principal Coordinate Analysis of Neighbourhood Matrices
+PCNM results in synthetic variables, which encode all possible spatial and temporal
+patterns between sites and survey dates.
+
+* We will calculate PCNM variables for sites (not surveys), 
+* join the spatial PCNM variables to the sites table,
+* join the sites table to the surveys table, and
+* keep only the PCNM variables for each survey.
+
+This will result in a matrix Xs.pcnm with the same number of rows as Y.
+
+```{r}
+Xs.site.pcnm <- pcnm(dist(X.site.xy))
+sites_pcnm <- cbind(sites, scores(Xs.site.pcnm))
+surveys_pcnm <- left_join(nest, sites_pcnm, by=c("division", "section", "subsection"))
+Xs.pcnm <- select(surveys_pcnm, starts_with("PCNM"))
+
+Xt.pcnm <- pcnm(dist(Xt))
+```
+TODO Report min and max detectable pattern size.
+TODO speed up Xt.pcnm
+
+# Variable selection and modelling
+## Selecting good predictors
+* Forward selection of Y, X gives X.sel
+* Forward selection of Y, Xs.pcnm gives Xs.pcnm.sel
+* Forward selection of Y, Xt.pcnm gices Xt.pcnm.sel
+
+```{r}
+Xs.sel <- forward.sel(Y, Xs.pcnm)
+X.sel <- forward.sel(Y, X)
+XS <- Xs.pcnm %>% select(Xs.sel$order)
+XE <- X %>% select(X.sel$order)
+```
+
+## Jointly and separately explained variance
+Variation partioning
+
+```{r}
+summary(Xs.sel)
+Y.vp <- varpart(Y, ~as.matrix(XE), ~as.matrix(XS))
+Y.vp
+plot(Y.vp)
+```
+This Venn diagram shows the variance of Y explained by environmental variables
+alone (0%), spatial patterns without environmental variables (23%), and jointly
+explained variance (1%).
+
+## Spatial patterns
+Consider the variance explained by spatial patterns, identified through forward
+variable selection.
+
+```{r}
+Xs.sel
+```
+PCNM3 explains 15%, PCNM8 a further 4%. Let's plot these two.
+
+```{r}
+ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM3, bubble=3,
+     main="Spatial pattern PCNM 3 explains 15% variance")
+
+ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM8, bubble=3,
+     main="Spatial pattern PCNM 8 explains 4% variance")
+```
+
+
+## Creating a model
+Pure speculation from here on, not much use without environmental explanatory variables.
+Assuming linear correlation between Y and X, use redundancy analysis RDA.
+
+```{r}
+XSm <- as.matrix(XS)
+Y.rda <- rda(Y ~ XSm)
+ordiplot(Y.rda)
+```
+
+
+# Simulate change
+Create a matrix X.sc1 of explanatory / environmental variables fo a change scenario.
+
+Y.expected = predict(model, X.sc1)
+
+Show Y.expected, compare to Y baseline.
