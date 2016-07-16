@@ -1,7 +1,7 @@
 ---
 title: "Ningaloo Turtle Program Data Extraction, Transformation and Loading"
 author: "Florian Mayer"
-date: "4 July 2016"
+date: "14 July 2016"
 output: html_document
 ---
 This workbook executes and documents the extraction, transformation and loading
@@ -27,6 +27,7 @@ Create your own `setup_ckanr.R` from the template `setup_ckanr_template.R`.
 Then, load required libraries and source `setup_ckanr.R`.
 ```{r, warning=FALSE, message=FALSE}
 require(Hmisc)
+library(tidyr)
 require(dplyr)
 require(lubridate)
 require(ckanr)
@@ -39,10 +40,10 @@ source("setup_ckanr.R")
 # Extract data
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T, message=FALSE}
-tmp <- tempfile(tmpdir="data")
-download.file(resource_show(MDB_RID)$url, tmp)
-dbfile <- unzip(tmp, "ningaloov4.mdb")
-# dbfile <- "data/ningaloov4.mdb"
+# tmp <- tempfile(tmpdir="data")
+# download.file(resource_show(MDB_RID)$url, tmp)
+# dbfile <- unzip(tmp, "ningaloov4.mdb")
+dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 contents(con)
 ```
@@ -52,52 +53,30 @@ contents(con)
 ## Sites
 In `tblSections`, sites are called "subsections", representing walkable parts 
 of a beach.
-Where all coordinates are given, we'll permutate SW and NE coordinates into 
-five coordinate pairs (SW, SE, NE, NW, and SW again to close the rectangle).
-This arrangement will make it easier for us to build bounding boxes later on.
+
+We'll preserve the centroid coordinate pair as "lat" and "lon", and
+the bounding box extent as max and min x and y coordinates.
 ```{r}
 sites <- con$tblSections %>%
-#   filter(!is.na(SubSect.NE.lat) & !is.na(SubSect.NE.long) &
-#     !is.na(SubSect.SW.lat) & !is.na(SubSect.SW.long)) %>%
   transmute(
     id=as.numeric(SubSect.Id),
-    subsection=as.character(txtSubSection),
-    section=as.character(txtSections),
     division=as.character(division.name),
-    center.lat=-as.numeric(SubSect.center.lat),
-    center.lon=as.numeric(SubSect.center.long),
-    sw.lon=as.numeric(SubSect.SW.long),
-    sw.lat=-as.numeric(SubSect.SW.lat),
-    se.lon=as.numeric(SubSect.NE.long),
-    se.lat=-as.numeric(SubSect.SW.lat),
-    ne.lon=as.numeric(SubSect.NE.long),
-    ne.lat=-as.numeric(SubSect.NE.lat),
-    ne.lon=as.numeric(SubSect.NE.long),
-    ne.lat=-as.numeric(SubSect.NE.lat),
-    nw.lon=as.numeric(SubSect.SW.long),
-    nw.lat=-as.numeric(SubSect.NE.lat),
-    end.lon=as.numeric(SubSect.SW.long),
-    end.lat=-as.numeric(SubSect.SW.lat)
-  )
+    section=as.character(txtSections),
+    subsection=as.character(txtSubSection),
+    lat=-as.numeric(SubSect.center.lat),
+    lon=as.numeric(SubSect.center.long),
+    ymax=-as.numeric(SubSect.NE.lat),
+    ymin=-as.numeric(SubSect.SW.lat),
+    xmax=as.numeric(SubSect.NE.long),
+    xmin=as.numeric(SubSect.SW.long))
 row.names(sites) <- sites$id
 
 # Manually fix mising NE corner of Red Bluff
-redbluffrow <- which(sites$subsection=="Red Bluff")
-sites[redbluffrow,]$ne.lon <- 113.458
-sites[redbluffrow,]$se.lon <- 113.458
-sites[redbluffrow,]$ne.lat <- -24.016
-sites[redbluffrow,]$nw.lat <- -24.016
-```
+# Note: this is a temporary measure until the Access db is updated
+sites[which(sites$subsection=="Red Bluff"),]$xmax <- 113.458
+sites[which(sites$subsection=="Red Bluff"),]$ymax <- -24.016
 
-### Sites with missing coordinates
-Although we can patch the data here, sites with missing coordinates need to be fixed in the original data source!
-If there are any sites listed here, please supply the missing data in the original
-NTP access database, then zip and upload the original Access database to the data catalogue.
-```{r}
-badsites <- filter(con$tblSections, 
-  is.na(SubSect.NE.lat) | is.na(SubSect.NE.long) | 
-    is.na(SubSect.SW.lat) | is.na(SubSect.SW.long))
-DT::datatable(badsites, caption="Sites with missing coordinates")
+write.csv(sites, file = "data/sites.csv", row.names=F)
 ```
 
 ### Shapefiles - R style
@@ -107,11 +86,12 @@ of a polygon shapefile.
 `coords` is a matrix containing the five coordinate pairs (columns) for all sites (rows).
 ```{r}
 coords <- sites %>%
-  select(sw.lon, sw.lat, 
-         se.lon, se.lat, 
-         ne.lon, ne.lat, 
-         nw.lon, nw.lat, 
-         end.lon, end.lat) %>%
+  transmute(
+    sw.lon=xmin, sw.lat=ymin,
+    se.lon=xmax, se.lat=ymin,
+    ne.lon=xmax, ne.lat=ymax,
+    nw.lon=xmin, nw.lat=ymax,
+    end.lon=xmin, end.lat=ymin) %>%
   as.matrix()
 ```
 
@@ -122,19 +102,23 @@ ids <- sites %>% select(id) %>% as.matrix()
 
 `make_polygons` creates one `Polygon` object from a matrix of coordinates and a 
 vector of IDs like the above.
+
+The matrix of coordinates needs to contain a list of lon/lat pairs with the last one
+being a copy of the first one. E.g., a rectangle needs to be represented as
+five points: SW, SE, NE, SW, SW to close the ring.
 ```{r}
 #' Create SpatialPolygons from a vector of lon/lat coordinates (poly) and IDs
 make_polygons <- function(poly, id) {
   Polygons(list(Polygon(matrix(poly, ncol=2, byrow=TRUE))), ID=id)}
 ```
 
-Create SpatialPolygons (SpatialPolygons `polys`) from the coordinates (matrix `coords`) and IDs (matrix `ids`)
-by vectorising the function `make_polygons` over all sites (one site is one row 
-in `coords`) using the correct projection (WGS84).
+Create SpatialPolygons (SpatialPolygons `polys`) from the coordinates 
+(matrix `coords`) and IDs (matrix `ids`) by vectorising the function 
+`make_polygons` over all sites (one site is one row in `coords`) using the 
+correct projection (WGS84).
 ```{r}
 wgs84 <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84")
-polys <- SpatialPolygons(
-  mapply(make_polygons, split(coords, row(coords)), ids), proj4string=wgs84)
+polys <- SpatialPolygons(mapply(make_polygons, split(coords, row(coords)), ids), proj4string=wgs84)
 ```
 
 Create a SpatialPolygonsDataFrame `polys.df` from SpatialPolygons `polys` and a 
@@ -154,38 +138,57 @@ mapview(polys.df)
 Surveys are joined to environmental condition, column names are sanitised.
 Read `tblDBAreaSurveyed`, parse date formats, infer timezone GMT+08, resolve
 lookup for Yes/No, and clean up column names.
+
+**Note** The table `tblDBAreaSurveyed` lacks a foreign key `site_id` to 
+`tblSections`, instead it repeats division, section and subsection names.
+
+Since there are two subsections with different divisions (site_id 64 and 68),
+joining by subsection alone will result in duplicate surveys.
+
+We will break good database practice and, for lack of a proper foreign key,
+join surveys to sites by all of division, section and subsection names.
+
+The boolean indicator for disturbance `Ysn.id` is 1 for yes (good practice) and 2
+for no (normally 0 means no). We will keep the 1 for yes and change all occurrences
+of the number 2 to 0 to align this field with the other boolean fields.
+
 ```{r}
 ord <- c("mdyHMS")
-tz <- "GMT"
+tz <- "Australia/Perth"
 surveys <- con$tblDBAreaSurveyed %>%
   left_join(con$tblEnvironCond, by="date.id") %>%
-  left_join(con$tblYsnDisturbed, by="Ysn.id") %>%
-  mutate(date.id=parse_date_time(date.id, orders=ord, tz=tz)) %>%
-  rename(date=date.id,
-         disturbed=txt.YesNoDist,
-         survey_id=area.svyd.id,
-         division=Divsion,
-         section=Section,
-         subsection=SubSection,
-         no_false_crawls_fox_tracks=numFalseCrawlsFoxTracks,
-         fox_tracks_present=FoxTracks,
-         dog_tracks_present=DogTracks,
-         wind_speed=wind.speed,
-         wind_direction=wind.direction,
-         air_temp=air.temp,
-         water_temp=water.temp,
-         time_of_high_tide=time.HT,
-         height_of_high_tide=hght.HT) %>%
-  select(-division, -section) %>%
-  left_join(sites, by="subsection") %>%
-  select(-starts_with("Ysn.id"))
+  mutate(
+    date.id=parse_date_time(date.id, orders=ord, tz=tz),
+    time.HT=parse_date_time(time.HT, orders=ord, tz=tz)) %>%
+  mutate(
+    time.HT=date.id + hour(time.HT) + minute(time.HT) + second(time.HT)) %>%
+  rename(
+    date=date.id,
+    survey_id=area.svyd.id,
+    division=Divsion,
+    section=Section,
+    subsection=SubSection,
+    site_disturbed=Ysn.id,
+    fox_tracks_present=FoxTracks,
+    dog_tracks_present=DogTracks,
+    no_false_crawls_fox_tracks=numFalseCrawlsFoxTracks,
+    survey_comments=comments,
+    wind_speed=wind.speed,
+    wind_direction=wind.direction,
+    air_temp=air.temp,
+    water_temp=water.temp,
+    time_of_high_tide=time.HT,
+    height_of_high_tide=hght.HT) %>%
+  left_join(sites, by=c("division","section", "subsection")) %>%
+  select(
+    -starts_with("Ysn.id"), -starts_with("sw"), -starts_with("se"), 
+    -starts_with("nw"), -starts_with("ne")) %>%
+  select(survey_id, date, division, section, subsection, everything())
+
+surveys[which(surveys$site_disturbed==2),]$site_disturbed=0
 write.csv(surveys, file = "data/surveys.csv", row.names=F)
 # DT::datatable(surveys)
-
-duplicated_surveys <- surveys %>% filter(duplicated(surveys$survey_id))
-# DT::datatable(duplicated_surveys, caption = "Duplicated survey IDs")
 ```
-
 
 ## Lookups
 Let's clean up the column names of lookups.
@@ -194,7 +197,6 @@ species <- rename(con$tblTurtleSpecies, species_id=Turtle.Species.ID, species_na
 nest_types <- rename(con$tblNestType, nest_type_id=NestTypeID, nest_type=NestType)
 confidence <- rename(con$tblPosConf, confidence_id=PosConf.ID, confidence=txtPosConf)
 position <-  rename(con$tblProfilePos, position_id=intPosID, position=Position)
-yes_no <- rename(con$tblYsnDisturbed, yes_no_id=Ysn.id, yes_no=txt.YesNoDist)
 track_type <- rename(con$tblTrackType, track_id=track.id, track_origin=txtTrackName)
 ```
 
@@ -204,26 +206,24 @@ Munge `tblDBFalseCrawl`:
 * Clean up column names, 
 * drop duplicated "division" and "section",
 * resolve species lookups, 
-* append survey level data, 
+* append survey level data,
+* replace the missing species names (NA) with "NA",
 * write to CSV and preview.
-
-**QA check** 13577 observations, after joining surveys: 13798
-some crawl_ids are duplicated
 
 ```{r}
 crawls <- con$tblDBFalseCrawl %>%
-  rename(species_id=FalseCrawlSpecies,
-         survey_id=area.svyd.id,
-         no_false_crawls=NumberFalseCrawls,
-         crawl_id=FalseCrawlRecordID) %>%
+  rename(
+    species_id=FalseCrawlSpecies,
+    survey_id=area.svyd.id,
+    no_false_crawls=NumberFalseCrawls,
+    crawl_id=FalseCrawlRecordID) %>%
   left_join(species, by="species_id") %>%
   select(-species_id) %>%
   left_join(surveys, by="survey_id")
+crawls[which(is.na(crawls$species_name)),]$species_name = 'NA'
 write.csv(crawls, file = "data/crawls.csv", row.names=F)
-# DT::datatable(crawls)
 
-duplicated_crawls <- crawls %>% filter(duplicated(crawls$crawl_id))
-# DT::datatable(duplicated_crawls, caption = "Duplicated crawls")
+# DT::datatable(crawls)
 ```
 
 ## Observations: Real nests
@@ -233,50 +233,69 @@ Like with false crawls, munge `tblDBNestingSurvey`:
 * resolve all lookups and drop their purely internal IDs, 
 * restore the missing negative latitude sign, 
 * append survey level data, 
+* reorder and select columns,
+* set row names to nest id,
+* restore boolean nest disturbance values,
 * save to CSV and preview.
 
 ```{r}
 nests <- con$tblDBNestingSurvey %>%
-  rename(nest_id=NestID,
-         survey_id=area.svyd.id,
-         nest_type_id=NestType,
-         confidence_id=PosConf.ID,
-         position_id=intPosID,
-         yes_no_id=ysnNestDist.ID,
-         species_id=crawl.id,
-         track_id=track.id,
-         track_id2=track.id2,
-         camera_photo_no=CameraPhotoNo,
-         comments=Comments) %>%
+  mutate(
+    longitude=as.numeric(longitude),
+    latitude=-as.numeric(latitude)) %>%
+  rename(
+    nest_id=NestID,
+    survey_id=area.svyd.id,
+    nest_type_id=NestType,
+    confidence_id=PosConf.ID,
+    position_id=intPosID,
+    nest_disturbed=ysnNestDist.ID,
+    species_id=crawl.id,
+    track_id=track.id,
+    track_id2=track.id2,
+    camera_photo_no=CameraPhotoNo,
+    comments=Comments) %>%
   left_join(nest_types, by="nest_type_id") %>%
   left_join(confidence, by="confidence_id") %>%
   left_join(position, by="position_id") %>%
-  left_join(yes_no, by="yes_no_id") %>%
   left_join(track_type, by="track_id") %>%
   left_join(species, by="species_id") %>%
-  left_join(surveys, by="survey_id") %>%
-  rename(disturbed_nest=yes_no) %>%
-  mutate(latitude=-as.numeric(latitude),
-         longitude=as.numeric(longitude)) %>%
-  select(-nest_type_id, -confidence_id, -position_id, 
-         -yes_no_id, -species_id, -track_id)
+  inner_join(surveys, by="survey_id") %>%
+  select(
+    survey_id, nest_id, division, section, subsection,
+    date, longitude, latitude, 
+    species_name, nest_type, position, confidence,
+    track_origin, track_id, track_id2, 
+    nest_disturbed, fox_tracks_present, dog_tracks_present, 
+    camera_photo_no, comments, survey_comments, 
+    wind_speed, wind_direction, air_temp, water_temp, 
+    time_of_high_tide, height_of_high_tide, lat, lon)
+row.names(nests) <- nests$nest_id
+nests[which(nests$nest_disturbed==2),]$nest_disturbed=0
 write.csv(nests, file = "data/nests.csv", row.names=F)
 # DT::datatable(nests)
-
-duplicated_nests <- nests %>% filter(duplicated(nests$nest_id))
-# DT::datatable(duplicated_crawls, caption = "Duplicated crawls")
 ```
 
 ### Summary of new nests by survey
 The sum of new nests for every unique combination of survey (subsection, date)
 and species.
+
+Steps:
+
+* Filter the nest observations to new nests only
+* Group by unique combinations of subsection and date (= surveys) and species name
+* Count the observations of each group (= total number of nests of species x seen on date y at subsection z)
+* Append survey level data
+* Save to CSV and show as interactive datatable
+
 ```{r}
 summary_nests <- tbl_df(nests) %>%
   filter(nest_type=="New") %>%
   group_by(subsection, date, species_name) %>%
   tally(sort=T) %>%
   ungroup() %>%
-  left_join(surveys)
+  spread(species_name, n, fill=0) %>%
+  inner_join(surveys)
 write.csv(summary_nests, file = "data/summary_nests.csv", row.names=F)
 DT::datatable(summary_nests)
 ```
@@ -284,14 +303,73 @@ DT::datatable(summary_nests)
 ### False crawls by survey
 The sum of false crawls for every unique combination of survey (subsection, date)
 and species.
+
+The steps are similar to the nest summary table.
+
 ```{r}
 summary_crawls <- tbl_df(crawls) %>%
-  group_by(subsection, date, species_name) %>%
-  tally(sort=T) %>%
+  group_by(survey_id, species_name) %>%
+  tally(sort=F) %>%
   ungroup() %>%
-  left_join(surveys)
+  spread(species_name, n, fill=0) %>%
+  inner_join(surveys)
 write.csv(summary_crawls, file = "data/summary_crawls.csv", row.names=F)
-# DT::datatable(summary_crawls)
+DT::datatable(summary_crawls)
+```
+
+# QA
+The following section will assist in the quality assurance of the data.
+
+### Duplicated Sites
+```{r}
+duplicated_sites <- sites %>% filter(duplicated(sites$subsection))
+DT::datatable(duplicated_sites, caption = "Duplicated sites")
+```
+
+### Sites with missing coordinates
+Although we can patch the data here, sites with missing coordinates need to be fixed in the original data source!
+If there are any sites listed here, please supply the missing data in the original
+NTP access database, then zip and upload the original Access database to the data catalogue.
+```{r}
+badsites <- filter(con$tblSections, 
+  is.na(SubSect.NE.lat) | is.na(SubSect.NE.long) | 
+    is.na(SubSect.SW.lat) | is.na(SubSect.SW.long))
+DT::datatable(badsites, caption="Sites with missing coordinates")
+```
+
+### Observations against missing surveys
+There are some observations of crawls (currently 302) and nests (currently 299)
+referring to non-existing survey ids.
+
+Above products `nests`, `crawls` and the summaries currently exclude observations 
+referring to non-existant surveys.
+
+Missing surveys should be entered at source if possible.
+
+```{r}
+crawls_missing_survey <- anti_join(crawls, surveys, by="survey_id")
+DT::datatable(crawls_missing_survey[,1:5])
+
+nests_missing_survey <- anti_join(nests, surveys, by="survey_id")
+DT::datatable(nests_missing_survey[,1:12])
+```
+
+### Crawl observations missing species name
+22 observations have NA values for their species name lookup. 
+These have been replaced with species name "NA" for the above products, 
+but should be fixed at source.
+
+```{r}
+cr <- con$tblDBFalseCrawl %>%
+  rename(
+    species_id=FalseCrawlSpecies,
+    survey_id=area.svyd.id,
+    no_false_crawls=NumberFalseCrawls,
+    crawl_id=FalseCrawlRecordID) %>%
+  left_join(species, by="species_id") %>%
+  select(-species_id) %>%
+  left_join(surveys, by="survey_id")
+DT::datatable(filter(cr, is.na(species_name))[,1:8])
 ```
 
 # Load
@@ -299,6 +377,7 @@ Upload outputs to CKAN.
 ```{r}
 ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
 ckanr::resource_update(SITES_RID, path="data/sites.geojson")
+ckanr::resource_update(SITES_CSV_RID, path="data/sites.csv")
 ckanr::resource_update(SURVEYS_RID, path="data/surveys.csv")
 ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
 ckanr::resource_update(NEST_RID, "data/nests.csv")
@@ -309,5 +388,5 @@ ckanr::resource_update(FALSE_CRAWL_RID, "data/summary_crawls.csv")
 # Cleanup
 Close the temporary file.
 ```{r}
-unlink(tmp)
+# unlink(tmp)
 ```

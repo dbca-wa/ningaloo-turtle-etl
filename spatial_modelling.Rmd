@@ -9,10 +9,39 @@ This document uses data from the
 [Ningaloo Turtle Program](http://internal-data.dpaw.wa.gov.au/dataset/ningaloo-turtle-program-data),
 as supplied by the current custodian Keely Markovina.
 
-Until this notive disappears, it is a work in progress. Insight created could
-be based on wrong assuptions or missing information, and must not be used
-to inform management decisions.
+# Caveat
+## Work in progress
+Until this notice disappears, this workbook presents a work in progress without
+guarantee for the validity of the created insight.
+Until this notice disappears, the findings presented here must be treated as 
+potentially wrong, and must not be used against the intellectual owners of the
+data or any related products.
+(Next: follow [this example](https://sites.ualberta.ca/~ahamann/teaching/renr690/Lab9.pdf))
 
+# Assumptions
+## Absences and sampling design
+###Unobserved absences
+The sampling design does not cover all Ningaloo beaches comprehensively, 
+but rather limits observations to a manageable subset of beaches. 
+Therefore, absences of nest observations at any spatial location are either 
+false absences due to undersampling, or real absences.
+
+###Observed absences
+Assuming that beach subsections were always sampled 
+comprehensively by well-trained operators, zero counts of nests in surveyed 
+beaches are seen as real absences of nests at that particular location and time.
+
+###Spatial patterns
+PCNM analysis can only detect spatial patterns between the 
+sampled beaches. It is possible that, were more beaches sampled, additional, 
+differently shaped patterns could be found as significant drivers of nest abundance.
+The patterns detected here however are real.
+
+### Gaps in environmental variables
+Over the years, different environmental variables were collected, creating gaps
+in preceding surveys. These gaps are filled with `NA` values, which the analyses
+we use here cannot handle. Therefore, there is little environmental data to model
+with.
 
 ```{r, echo=F, message=F, warning=F}
 require(Hmisc)
@@ -39,9 +68,16 @@ is run, which extracts, transforms and uploads data in accessible formats.
 ## Loading the data
 This workbook loads the extracted and summarised data from the catalogue.
 ```{r}
-nests <- read.csv(ckanr::resource_show(NEW_NEST_RID)$url, as.is=T)
-sites <- read.csv(ckanr::resource_show(SITES_CSV_RID)$url, as.is=T)
-surveys <- read.csv(ckanr::resource_show(SURVEYS_RID)$url, as.is=T)
+# Online
+# nests <- read.csv(ckanr::resource_show(NEW_NEST_RID)$url, as.is=T)
+# sites <- read.csv(ckanr::resource_show(SITES_CSV_RID)$url, as.is=T)
+# surveys <- read.csv(ckanr::resource_show(SURVEYS_RID)$url, as.is=T)
+
+# Offline
+nests <- read.csv("data/summary_nests.csv", as.is=T)
+sites <- read.csv("data/sites.csv", as.is=T)
+surveys <- read.csv("data/surveys.csv", as.is=T)
+
 ```
 
 ## Preparing the data
@@ -55,7 +91,11 @@ Let's use standard names for variables:
 * Xt is a numeric data.frame of temporal timestamps (using date as continuous number).
 * X.dates is a one-column data.frame of the dates as date objects, which will
   come in handy to label graph axes.
-  
+
+From the original summary of nest abundance, surveys with missing coordinates or
+other essential data for later analysis (here: `site_disturbed`, and location names)
+are excluded.
+
 ```{r}
 nest <- nests %>% filter(
   !is.na(lon), !is.na(lat), !is.na(site_disturbed),
@@ -71,9 +111,9 @@ X.in <- nest %>% select(no_false_crawls_fox_tracks, fox_tracks_present, dog_trac
 
 # Diagnostics and data treatment
 ## Detect and eliminate correlated variables
-* Ploughman's plot of Y and X
+* Pair plot of Y.in and X.in
 * Correlated variables will form lines
-* Uncorrelated variables will be distributed uniformly over both axes
+* Uncorrelated variables will be uniformly distributed over both axes
 ```{r}
 pairs(Y.in, main="Correlations between species")
 pairs(X.in, main="Correlations between environmental variables")
@@ -91,43 +131,45 @@ pairs(X.in, main="Correlations between environmental variables")
   true absence).
   
 ```{r}
-ggplot(Y.in) + geom_bar(aes(Loggerhead))
-ggplot(Y.in) + geom_bar(aes(Green))
-ggplot(Y.in) + geom_bar(aes(Flatback))
-ggplot(Y.in) + geom_bar(aes(Hawksbill))
-ggplot(Y.in) + geom_bar(aes(Unidentified))
+yp <- ggplot(Y.in)
+yp + geom_bar(aes(Loggerhead))
+yp + geom_bar(aes(Green))
+yp + geom_bar(aes(Flatback))
+yp + geom_bar(aes(Hawksbill))
+yp + geom_bar(aes(Unidentified))
 summary(Y.in)
 ```
 
 * Let's drop Flatbacks and Unidentified, as they are too sparse, and will bias 
   the dataset with shared absences creating false similarities between beaches.
-* Hellinger-transform the very left-skewed, sparse dataset.
+* Hellinger-transform the very left-skewed, sparse dataset. 
+* Possible alternative to Hellinger: `log(y) + c` transformation.
 
 ```{r}
-Y.sel <- select(Y.in, Green, Loggerhead, Hawksbill)
-Y.hel <- decostand(Y.sel, "hellinger")
-ggplot(Y.hel) + geom_bar(aes(Loggerhead))
-ggplot(Y.hel) + geom_bar(aes(Green))
-ggplot(Y.hel) + geom_bar(aes(Hawksbill))
+Y.hel <- Y.in %>% select(Green, Loggerhead, Hawksbill) %>% decostand("hellinger")
+yp <- ggplot(Y.hel) 
+yp + geom_bar(aes(Loggerhead))
+yp + geom_bar(aes(Green))
+yp + geom_bar(aes(Hawksbill))
 ```
 The distributions are looking better now!
 
 ```{r}
-ggplot(X.in) + geom_bar(aes(no_false_crawls_fox_tracks))
-ggplot(X.in) + geom_bar(aes(wind_speed))
-ggplot(X.in) + geom_bar(aes(wind_direction))
-ggplot(X.in) + geom_bar(aes(air_temp))
-ggplot(X.in) + geom_bar(aes(water_temp))
-ggplot(X.in) + geom_bar(aes(height_of_high_tide))
+xp <- ggplot(X.in) 
+xp + geom_bar(aes(no_false_crawls_fox_tracks))
+xp + geom_bar(aes(wind_speed))
+xp + geom_bar(aes(wind_direction))
+xp + geom_bar(aes(air_temp))
+xp + geom_bar(aes(water_temp))
+xp + geom_bar(aes(height_of_high_tide))
 summary(X.in)
 ```
 
 * Variables of X.in that are all 0 carry no explanatory weight and should be excluded.
   The histograms show variables like wind_speed with lots of 0, which in the original
-  data are NA. Unless these variables are populated comprehensively, we need to
-  omit them for now.
+  data are NA. These variables need to be populated comprehensively or excluded.
 * Continuous variables with different physical units (angles, velocities, 
-  temperatures) need to be ranged to [0..1] using `scales::rescale()`.
+  temperatures) need to be ranged to `[0..1]`, e.g. using `scales::rescale()`.
 * Binary "yes/no" variables already range from 0 to 1.
 
 Overall, only the three binary variables are useful.
@@ -146,9 +188,10 @@ use up the explanatory power of independent variables.
 We will build a Canonical Redundancy Analysis (RDA) model of responding variables
 constrained by their spatial coordinates, and work with the residuals of the model.
 
+Our naming convention calls the data frame of filtered (rows), selected (columns),
+inspected and transformed data now `Y`.
 ```{r}
-Y.spatialtrend <- rda(Y.hel, Xs)
-Y <- residuals(Y.spatialtrend)
+Y <- residuals(rda(Y.hel, Xs))
 pairs(Y)
 ```
 There still seems to be a negative correlation between the abundance of Green vs.
@@ -165,13 +208,20 @@ patterns between sites and survey dates.
 
 This will result in a matrix Xs.pcnm with the same number of rows as Y.
 
+A note on performance: 
+Calcualting PCNM variables is fast for only 61 sites. Joining PCNM variables of 61 sites to 12k surveys is fast.
+
+In contrast, there's no cheat for the time stamps, so calculating PCNM variables
+for 9366 surveys will take a while (~3 minutes on i7 / 8GB).
 ```{r}
 Xs.site.pcnm <- pcnm(dist(X.site.xy))
 sites_pcnm <- cbind(sites, scores(Xs.site.pcnm))
 surveys_pcnm <- left_join(nest, sites_pcnm, by=c("division", "section", "subsection"))
-Xs.pcnm <- select(surveys_pcnm, starts_with("PCNM"))
+Xs.scores <- select(surveys_pcnm, starts_with("PCNM"))
 
+# This one's gonna hurt.
 Xt.pcnm <- pcnm(dist(Xt))
+Xt.scores <- as.data.frame(scores(Xt.pcnm))
 ```
 TODO Report min and max detectable pattern size.
 TODO speed up Xt.pcnm
@@ -179,13 +229,15 @@ TODO speed up Xt.pcnm
 # Variable selection and modelling
 ## Selecting good predictors
 * Forward selection of Y, X gives X.sel
-* Forward selection of Y, Xs.pcnm gives Xs.pcnm.sel
-* Forward selection of Y, Xt.pcnm gices Xt.pcnm.sel
+* Forward selection of Y, Xs.pcnm gives Xs.sel
+* Forward selection of Y, Xt.pcnm gices Xt.sel
 
 ```{r}
-Xs.sel <- forward.sel(Y, Xs.pcnm)
+Xs.sel <- forward.sel(Y, Xs.scores)
+Xt.sel <- forward.sel(Y, Xt.scores)
 X.sel <- forward.sel(Y, X)
-XS <- Xs.pcnm %>% select(Xs.sel$order)
+XS <- Xs.scores %>% select(Xs.sel$order)
+XT <- Xt.scores %>% select(Xt.sel$order)
 XE <- X %>% select(X.sel$order)
 ```
 
@@ -193,14 +245,22 @@ XE <- X %>% select(X.sel$order)
 Variation partioning
 
 ```{r}
+summary(X.sel)
 summary(Xs.sel)
-Y.vp <- varpart(Y, ~as.matrix(XE), ~as.matrix(XS))
+summary(Xt.sel)
+Y.vp <- varpart(Y, ~as.matrix(XE), ~as.matrix(XS), ~as.matrix(XT))
 Y.vp
 plot(Y.vp)
 ```
-This Venn diagram shows the variance of Y explained by environmental variables
-alone (0%), spatial patterns without environmental variables (23%), and jointly
-explained variance (1%).
+This Venn diagram shows the variance of Y explained by 
+* environmental variables alone (X1, 0%), 
+* spatial patterns alone (X2, 23%),
+* temporal patterns alone (X3, 5%),
+* spatial and temporal patterns jointly (2%), and
+* spatial and environmental patterns jointly (1%).
+
+A residual 71% variance in Y remains unexplained by detectable spatial and temporal
+patterns, and used environmental variables.
 
 ## Spatial patterns
 Consider the variance explained by spatial patterns, identified through forward
@@ -220,13 +280,43 @@ ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM8, bubble=3,
 ```
 
 
+## Temporal patterns
+Note, we are considering all useable surveys of all locations mixed together.
+It might be more useful to consider surveys of all times from one beach subsection only
+when looking at temporal patterns.
+
+```{r}
+#' Create a scatterplot of PCNM values against dates.
+#' 
+#' nr: The row number of the forward.sel dataframe
+#' dates: a vector of ymd dates
+#' scores: a data.frame of PCNM scores
+#' fs: an output data.frame of forward.sel
+plot.xt <- function(nr, dates, scores, fs){
+  plot(x=ymd(dates), y=scores[,nr], type="p",
+     xlab="", ylab=paste("PCNM", fs[nr,2]), 
+     main=paste("Temporal pattern", fs[nr,2]), 
+     sub=paste("explains", round(as.numeric(fs[nr,3]), digits=3)*100, "% variance"))
+}
+# Plot all significant temporal PCNM variables
+lapply(seq_len(Xt.sel$order), plot.xt, X.dates$date, XT, Xt.sel)
+```
+
+Temporal patterns 9 (1.2% variance) and 12 (0.9% variance) coincide with the
+2011/2012/2013 heat waves.
+
+The lower ranked patterns show variation in the early years of the NTP.
+It would be interesting to compare these with the variation of survey effort in 
+that time.
+
 ## Creating a model
 Pure speculation from here on, not much use without environmental explanatory variables.
 Assuming linear correlation between Y and X, use redundancy analysis RDA.
 
 ```{r}
 XSm <- as.matrix(XS)
-Y.rda <- rda(Y ~ XSm)
+XTm <- as.matrix(XT)
+Y.rda <- rda(Y ~ XSm + XTm)
 ordiplot(Y.rda)
 ```
 
