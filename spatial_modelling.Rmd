@@ -245,14 +245,15 @@ XE <- X %>% select(X.sel$order)
 Variation partioning
 
 ```{r}
-summary(X.sel)
-summary(Xs.sel)
-summary(Xt.sel)
+X.sel
+Xs.sel
+Xt.sel
 Y.vp <- varpart(Y, ~as.matrix(XE), ~as.matrix(XS), ~as.matrix(XT))
 Y.vp
 plot(Y.vp)
 ```
 This Venn diagram shows the variance of Y explained by 
+
 * environmental variables alone (X1, 0%), 
 * spatial patterns alone (X2, 23%),
 * temporal patterns alone (X3, 5%),
@@ -271,12 +272,25 @@ Xs.sel
 ```
 PCNM3 explains 15%, PCNM8 a further 4%. Let's plot these two.
 
-```{r}
-ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM3, bubble=3,
-     main="Spatial pattern PCNM 3 explains 15% variance")
+```{r, message=F, warning=F}
+# ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM3, bubble=3,
+#      main="Spatial pattern PCNM 3 explains 15% variance")
+# 
+# ordisurf(select(sites_pcnm, lon, lat), sites_pcnm$PCNM8, bubble=3,
+#      main="Spatial pattern PCNM 8 explains 4% variance")
 
-ordisurf(x=select(sites_pcnm, lon, lat), sites_pcnm$PCNM8, bubble=3,
-     main="Spatial pattern PCNM 8 explains 4% variance")
+plot.xs <- function(nr, coords, scores, fs){
+  ordisurf(coords, scores[,nr], bubble=3,
+           main=paste("Spatial pattern", fs[nr,2]), 
+           sub=paste("explains", round(as.numeric(fs[nr,3]), digits=3)*100, 
+                     "% variance"))
+}
+
+lapply(seq_len(nrow(Xs.sel)), 
+       plot.xs, 
+       select(sites_pcnm, lon, lat), 
+       select(sites_pcnm, starts_with("PCNM")), 
+       Xs.sel)
 ```
 
 
@@ -285,7 +299,7 @@ Note, we are considering all useable surveys of all locations mixed together.
 It might be more useful to consider surveys of all times from one beach subsection only
 when looking at temporal patterns.
 
-```{r}
+```{r, warning=F, message=F}
 #' Create a scatterplot of PCNM values against dates.
 #' 
 #' nr: The row number of the forward.sel dataframe
@@ -298,7 +312,8 @@ plot.xt <- function(nr, dates, scores, fs){
      main=paste("Temporal pattern", fs[nr,2]), 
      sub=paste("explains", round(as.numeric(fs[nr,3]), digits=3)*100, "% variance"))
 }
-# Plot all significant temporal PCNM variables
+
+# Plot all significant temporal PCNM variables.
 lapply(seq_len(Xt.sel$order), plot.xt, X.dates$date, XT, Xt.sel)
 ```
 
