@@ -1,0 +1,16 @@
+require(Hmisc)
+library(tidyr)
+require(dplyr)
+require(lubridate)
+require(ckanr)
+require(DT)
+require(rgdal)
+require(mapview)
+require(vegan)
+require(RODBC)
+source("setup_ckanr.R")
+
+load("data/working_data.RData")
+
+con <- odbcDriverConnect(TAG_CON)
+res <- sqlQuery(con, 'select * from information_schema.tables')
