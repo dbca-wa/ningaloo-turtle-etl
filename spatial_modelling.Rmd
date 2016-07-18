@@ -54,7 +54,7 @@ require(mapview)
 require(vegan)
 require(scales)
 require(packfor)
-source("setup_ckanr.R")
+source("setup.R")
 ```
 
 # Data
@@ -337,8 +337,74 @@ ordiplot(Y.rda)
 
 
 # Simulate change
-Create a matrix X.sc1 of explanatory / environmental variables fo a change scenario.
+Stub section!
 
-Y.expected = predict(model, X.sc1)
+* Create a matrix X.sc1 of explanatory / environmental variables fo a change scenario.
+* Y.expected = predict(model, X.sc1)
+* Show Y.expected, compare to Y baseline.
 
-Show Y.expected, compare to Y baseline.
+# Discussion
+This section contains expert knowledge provided by Bob Prince.
+
+Note: Observations of tagged turtles have high value, record sightings where possible.
+
+## Spatial patterns: maritime currents and coastal geomorphology
+In summertime, a cooler counter-current comes up the Ningaloo shore; 
+the Leeuwin current running North to South shears off the coast at Jane's Bay. 
+Most Green Turtles nest north of Jane's Bay; 
+Loggerheads nest predominantly south of Pt Cloates / Jane's Bay where there's
+the cooler counter current.
+**Spatial patterns 3, 8 and 9*** coincide with offshore water temperature regime.
+
+The remaining spatial patterns look like they possibly coincide with 
+geomorphology and geology of beaches, which determine the suitability of beaches for nesting.
+
+## Candidate environmental drivers
+* **SOI** 
+  Colin Limpus did a prediction linking SOI (southern oscillation index) to green 
+  turtle abundance. Does the SOI correlate to nest abundance?
+* **Shallow water bathymetry**
+  Turtles enter the lagoon through reef breaks, and nest directly onshore behind
+  reef breaks if the beach is sufficiently sandy.
+* **Beach orientation and wind exposure** 
+  Turtles don't like to be sandblasted while nesting, so they will favour low winds
+  or sheltered beaches.
+* **Beach geomporphology and geology**
+  The ability to nest depends on the sand composition and state (moisture) on the beach.
+  But not all sandy beaches are always sandy - at Jakobz / Wobiri, a cyclone in 
+  the 1990s washed what looked like a sandy beach 
+  off the rocky substrate, which made the beach inaccessible for turtles to nest.
+* **Bathymetry** 
+  At low tide, some beaches might not be accessible to turtles, as the reef might 
+  be too exposed. 
+* **Seagrass** 
+  Sea climate and cyclone damage drive Seagrass productivity.
+  Seagrass contains Zinc, which is an essential trace element.
+  Does turtle abundance correlate to Zinc availability?
+
+## Turtle phyisiology and life cycles
+To model the abundance and variation of nesting, one has to understand the life cycle
+of turtles, identify each step and mine possible drivers and impactors, then relate those
+(minding the time lag of impact) to nesting.
+
+Green turtles are herbivorous, Loggerhead turtles are carnivorous.
+Nesting follos dietary surplus, diet of Loggerheads varies less than diet of Greens, 
+as it's buffered through the additional trophic level.
+
+Green turtles start ovigenesis in April (offshore), and lay eggs in mid Nov to end of Jan.
+Processes affecting turtle physiology in April (wherever they are at that time)
+might affect / correlate with nesting.
+
+
+## Next steps
+Product: Further agglomerate data by summarising tracks / nests by turtle season 
+and either of division, section or subsection.
+
+Question 1: Green turtle nesting abundance can vary in orders of magnitude between years.
+Identify these low abundance years, compare to survey effort / environmental drivers.
+Filter surveys of green turtle beaches to extermely low numbers of 
+green nests / tracks, see abundance of other species, compare sampling effort to other times
+
+Question 2: Saturation sampling occurs when too many turtles trample tracks.
+Flag high nest / track abundances as possible saturation sampling
+

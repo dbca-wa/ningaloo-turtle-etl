@@ -1,0 +1,92 @@
+---
+title: "Turtle Tagging ETL"
+author: "Florian Mayer"
+date: "18 July 2016"
+output: html_document
+---
+
+This document describes and executes the Extraction, Transformation and (up)Loading
+of data from the Turtle Tagging database WAMTRAM 2 to the data catalogue.
+
+
+# Installation
+```{r, eval=F}
+system("sudo apt-get install r-cran-rjava")
+system("sudo R CMD javareconf")
+install.packages("rJava")
+dplyr_url <- "https://cran.rstudio.com/src/contrib/Archive/dplyr/dplyr_0.4.3.tar.gz"
+install.packages(dplyr_url, repos=NULL, type="source")
+install.packages("RSQLServer")
+
+## Follow http://itsalocke.com/install-sql-server-odbc-drivers-travis-ci/
+# wget https://download.microsoft.com/download/2/E/5/2E58F097-805C-4AB8-9FC6-71288AB4409D/msodbcsql-13.0.0.0.tar.gz -P ..
+# tar xvzf ../msodbcsql-13.0.0.0.tar.gz -C ..
+# sed -i '14d' ../msodbcsql-13.0.0.0/build_dm.sh
+# sed -i '/tmp=/ctmp=/tmp/odbcbuilds' ../msodbcsql-13.0.0.0/build_dm.sh
+# ../msodbcsql-13.0.0.0/build_dm.sh --accept-warning
+# cd /tmp/odbcbuilds/unixODBC-2.3.1
+# sudo make install
+# cd ~
+#   sudo apt-get install libgss3 -y
+# ../msodbcsql-13.0.0.0/install.sh verify
+# cd ../msodbcsql-13.0.0.0/
+#   sudo ./install.sh install --accept-license
+# odbcinst -q -d -n "ODBC Driver 13 for SQL Server"
+
+# Add to ~/.odbc.ini
+# [turtle_tagging]
+# Driver = ODBC Driver 13 for SQL Server
+# Server = MSSQL_SERVER_DNSNAME
+```
+
+
+# Extract
+```{r, message=F}
+require(Hmisc)
+library(tidyr)
+require(dplyr)
+require(lubridate)
+require(ckanr)
+require(DT)
+require(rgdal)
+require(mapview)
+require(vegan)
+# require(RSQLServer)
+source("setup.R")
+```
+
+```{r}
+# con <- RSQLServer::dbConnect(RSQLServer::SQLServer(), SRV, database=DB, 
+#                              properties=list(user=UN, password=PW))
+# dbListTables(con)
+
+library(RODBC)
+con <- odbcConnect("turtle_tagging", uid=UN, pwd=PW)
+res <- sqlQuery(con, 'select * from information_schema.tables')
+res
+```
+
+# Transform
+
+# Upload
+
+# Products
+## Gorgon control charts
+
+* Adult survival rate: annual survival probability vs time
+* Breeding omission rate: annual breeding probability vs time
+* Annual nesters (Barrow Island): flatback nesters vs time
+* Mean clutch frequency (Barrow Island): clutches per female vs time
+* Egg hatchling rate: annual hatchling probability vs time
+* Hatchling emergence rate: annual emergence probability
+* Daily count at terminal / at bivalve: GLMM standardised index vs time
+* Hatchling disorientation at terminal / at bivalve: fan spread (Yeo-Johnson tf) vs time
+* Hatchling misorientation at terminal / at bivalve: fan offset (Y-J tf)
+* Sand temperature at 50 cm at Mushroom / terminal / bivalve / yacht club north / yc south / overall vs time
+* Intra-seasonal dynamics: Within season arrival probabilities: probability vs time
+
+## Tag history
+For each tag ID, one column per year, value 0 (not encountered) or 1 (encountered),
+plus columns for location and species
+
+
