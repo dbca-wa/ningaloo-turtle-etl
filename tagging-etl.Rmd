@@ -4,46 +4,9 @@ author: "Florian Mayer"
 date: "18 July 2016"
 output: html_document
 ---
-
-This document describes and executes the Extraction, Transformation and (up)Loading
-of data from the Turtle Tagging database WAMTRAM 2 to the data catalogue.
-
-
-# Installation
-```{r, eval=F}
-system("sudo apt-get install r-cran-rjava")
-system("sudo R CMD javareconf")
-install.packages("rJava")
-dplyr_url <- "https://cran.rstudio.com/src/contrib/Archive/dplyr/dplyr_0.4.3.tar.gz"
-install.packages(dplyr_url, repos=NULL, type="source")
-install.packages("RSQLServer")
-
-## Follow http://itsalocke.com/install-sql-server-odbc-drivers-travis-ci/
-# wget https://download.microsoft.com/download/2/E/5/2E58F097-805C-4AB8-9FC6-71288AB4409D/msodbcsql-13.0.0.0.tar.gz -P ..
-# tar xvzf ../msodbcsql-13.0.0.0.tar.gz -C ..
-# sed -i '14d' ../msodbcsql-13.0.0.0/build_dm.sh
-# sed -i '/tmp=/ctmp=/tmp/odbcbuilds' ../msodbcsql-13.0.0.0/build_dm.sh
-# ../msodbcsql-13.0.0.0/build_dm.sh --accept-warning
-# cd /tmp/odbcbuilds/unixODBC-2.3.1
-# sudo make install
-# cd ~
-#   sudo apt-get install libgss3 -y
-# ../msodbcsql-13.0.0.0/install.sh verify
-# cd ../msodbcsql-13.0.0.0/
-#   sudo ./install.sh install --accept-license
-# odbcinst -q -d -n "ODBC Driver 13 for SQL Server"
-
-# Add to ~/.odbc.ini
-# [turtle_tagging]
-# Driver = ODBC Driver 13 for SQL Server
-# Server = MSSQL_SERVER_DNSNAME
-```
-
-
-# Extract
 ```{r, message=F}
 require(Hmisc)
-library(tidyr)
+require(tidyr)
 require(dplyr)
 require(lubridate)
 require(ckanr)
@@ -51,27 +14,200 @@ require(DT)
 require(rgdal)
 require(mapview)
 require(vegan)
-# require(RSQLServer)
+require(RODBC)
 source("setup.R")
 ```
 
-```{r}
-# con <- RSQLServer::dbConnect(RSQLServer::SQLServer(), SRV, database=DB, 
-#                              properties=list(user=UN, password=PW))
-# dbListTables(con)
+This document describes and executes the Extraction, Transformation and (up)Loading
+of data from the Turtle Tagging database WAMTRAM 2 to the data catalogue.
 
-library(RODBC)
-con <- odbcConnect("turtle_tagging", uid=UN, pwd=PW)
-res <- sqlQuery(con, 'select * from information_schema.tables')
-res
+It is based on technical documentation provided by Simon Woodman.
+
+# Installation
+Setup RODBC as per [the instructions](http://itsalocke.com/install-sql-server-odbc-drivers-travis-ci/)
+and configure an ODBC data source for the tagging database, e.g. crying / curling 
+up into a ball and ask an experienced user configure the ODBC data source in 
+Control Panel > ODBC Data Sources (Windows), going to the Apple store and buying 
+a new MacBook Pro (Apple), or writing three lines to a file `~/.odbc.ini` (Linux):
+
+```{r, eval=F}
+[turtle_tagging]
+Driver = ODBC Driver 13 for SQL Server
+Server = THE_MSSQL_SERVER_DNSNAME
 ```
 
-# Transform
+See also the [RODBC vigette](https://cran.r-project.org/web/packages/RODBC/vignettes/RODBC.pdf).
 
-# Upload
+# Purpose
+The purpose of this document is to outline the code contained within the SQL Server WA Marine Turtles Database. Primarily the code is for the processing of Turtle observation records captured using the Microsoft Access application developed by Pendoley Environmental. Originally the main Turtle database application had a "flat-file" base data entry process, but this was subsequently replaced by the Pendoley Environmental application. Problems with the transfer of data from the data entry program into the main database prompted a re-development of the process, which is described in this document.
+
+# Field data ingestion
+
+```{r}
+# libary(RSQLServer)
+# con <- RSQLServer::dbConnect(RSQLServer::SQLServer(), SRV, database=DB, properties=list(user=UN, password=PW))
+# dbListTables(con)
+# RODBC:
+con <- odbcConnect("turtle_tagging", uid=UN, pwd=PW)
+entry_batches <- sqlQuery(con, 'select * from dbo.TRT_ENTRY_BATCHES')
+data_entry <- sqlQuery(con, 'select * from dbo.TRT_DATA_ENTRY')
+data_entry_operators <- sqlQuery(con, 'select * from TRT_DATA_ENTRY_PERSONS')
+```
+
+Data is transferred from the data entry file into holding tables in the 
+SQL Server database for processing via the main WA Marine Turtles application. 
+It supports both the old flat-file format and the Pendoley data entry program format. 
+See the main WA Marine Turtles documentation for details on that functionality.
+
+There are 3 tables involved in the holding and used during the processing of the data entry records. 
+During processing data is copied from these tables to the tables of the main application. 
+Those details of those tables are not contained within this document. 
+
+## `TRT_ENTRY_BATCHES`
+Records are loaded from a data entry and processed in a single batch. 
+This table contains a single record per batch and stores a few basic details 
+about the batch such as the filename from where the records were loaded, 
+and whether the observation date uses the PR (Pendoley Rawcliffe) Date Convention. 
+**Note** For nesting turtles observed after midnight, the Pendoley Rawcliffe 
+date convention uses the previous day’s date. 
+
+## `TRT_DATA_ENTRY`
+This table contains the records of turtle observations. 
+All recordable attributes are stored in a single record for each observation. 
+The fields `TURTLE_ID` and `OBSERVATION_ID` are populated during the process described in 2.2.1. 
+If the record has not been successfully transferred to the main data tables, 
+the fields `ERROR_NUMBER` and `ERROR_MESSAGE` will be populated instead. 
+
+## `TRT_DATA_ENTRY_PERSONS`
+This table stores a list of people appearing in the data entry records for each batch. Individual people are defined in the TRT_PERSONS table. Historically there was an issue with the TRT_PERSONS table being populated by large number of duplicate records. The re-development addressed this issue by using the TRT_DATA_ENTRY_PERSONS table to define the unique people recorded in each batch, along with the mapping to the appropriate record in the TRT_PERSONS table. The records in this table are partially populated by the main WA Marine Turtles application, and interactively by the user performing the processing of the batch. 
+
+## Data entry summary
+There are `r nrow(entry_batches)` batches of data presently loaded, 
+providing `r nrow(data_entry)` records for ingestion from 
+`r nrow(data_entry_operators)` field data entry operators.
+
+# Business logic
+This section describes the "Stored Procedures" of the tagging database.
+
+The data is loaded from the data entry file via the Microsoft Access admin front-end, 
+but the processing of each record is performed by SQL Server stored procedures. 
+
+## `dbo.EntryBatchProcess`
+This is the main stored procedure that copies the data from the holding tables into the main application tables, updating the fields `TURTLE_ID`, `OBSERVATION_ID`, `ERROR_NUMBER` and `ERROR_MESSAGE` 
+where appropriate to indicate success or failure of the process. 
+
+The stored procedure loops through all records in the `TRT_DATA_ENTRY` table for a specified batch. 
+If a record fails validation or an unexpected error occurs, the `ERROR_NUMBER` 
+and `ERROR_MESSAGE` fields are populated and the process continues on to the next record. 
+
+If the record is successfully processed then the resulting values for `TURLTE_ID` 
+and `OBSERVATION_ID` are stored in the record. 
+
+The stored procedure can be run multiple times on the same batch, as records that have the `TURTLE_ID` and `OBSERVATION_ID` set are skipped. Records that have previously failed are reprocessed.
+
+This stored procedure is run from a button in the main WA Marine Turtles application. 
+
+## `dbo.ValidateDataEntryBatch`
+This routine loops through all the records in the `TRT_DATA_ENTRY` table for a specified batch 
+and attempts to validate each record. 
+
+Data is not transferred into the main application tables; however the 
+`ERROR_NUMBER` and `ERROR_MESSAGE` fields are populated for problem records. 
+
+In this way the user can check all the records in the batch before deciding to 
+load any data in the main application tables. 
+
+
+## `dbo.ValidateDataEntryRecord`
+This routine validates the values entered for a single record in the `TRT_DATA_ENTRY` table, 
+and is called by the dbo.ValidateDataEntryBatch stored procedure. 
+
+## `dbo.CheckPerson`
+This routine checks the `TRT_PERSONS` table for an existing record and returns 
+the value of the primary key (`PERSON_ID)`. 
+
+## `dbo.EntryBatchAddExistingTag`
+A helper routine for the dbo.EntryBatch stored procedure that adds a single record 
+to the `TRT_RECORDED_TAGS` table, and updates the status of the respective 
+record in the `TRT_TAGS` table. 
+
+This is used for an observation when a new flipper tag has been attached to a turtle. 
+
+## `dbo.EntryBatchAddNewTag`
+A helper routine for the `dbo.EntryBatch` stored procedure that adds a single record 
+to the `TRT_RECORDED_TAGS` table. 
+
+This is used for an observation when a previously attached flipper tag is recorded.
+
+## `dbo.ValidateIdentification`
+A helper routine for the `dbo.EntryBatch` stored procedure that validates other 
+turtle identification types (i.e. identification other than flipper or pit tags). 
+
+## `dbo.ValidateMeasurement`
+Validates measurements against minimum and maximum values stored in the `dbo.TRT_MEASUREMENT_TYPES` table. 
+
+## `dbo.ValidateFloatRange`
+A generic function for validating that the FLOAT value falls within an acceptable range. 
+
+## `dbo.ValidateIntegerRange`
+A generic function for validating that the INTEGER falls within an acceptable range. 
+
+## `dbo.FlipperTagExists`
+A function for determining whether or not a flipper tag exists in the `TRT_TAGS` table.
+
+## `dbo.PitTagExists`
+A function for determining whether or not a pit tag exists in the `TRT_PIT_TAGS` table. 
+
+## Calculated Fields in Tables 
+Scalar-valued Functions 
+
+###`dbo.ObservationStatus`
+This function returns one of the following values for the status of an observation: 
+
+* Initial Nesting, 
+* Initial Sighting, 
+* Remigrant, or 
+* Resighting. 
+
+The function is used to populate the value of the `TRT_OBSERVATIONS.OBSERVATION_STATUS` field.
+
+## Views 
+There are several summary views in the database that utilise stored procedures. 
+
+## Stored Procedures 
+### `dbo.InterseasonRemigration`
+This is a summary function that displays the history of inter-season remigration 
+for each turtle recorded in the system. It is used by the view `TRV_INTERSEASON_MIGRATION`. 
+
+### `dbo.ObservationTags`
+This is a summary function that returns a list of tags recorded for a turtle for a given observation. 
+It is not currently used. 
+
+## Other Functionality: Stored Procedures 
+
+### `dbo.TransferObservationsByFlipperTag`
+Changes in the database structure for version 2 of the WA Marine Turtles application 
+introduced modified referential integrity constraints between the tables 
+`TRT_OBSERVATIONS`, `TRT_TAGS` and `TRT_RECORDED_TAGS` table. 
+This had the benefit of ensuring valid data between these tables, 
+whereas previously data in the `TRT_RECORDED_TAGS` table was allowed to be 
+inconsistent with data in the other two tables. 
+
+The reasoning behind this was to reflect data actually captured by the users, 
+and data recording problems could be analysed and reviewed via an exceptions report. 
+
+The downside to the change was that records that were found to have been assigned 
+to the wrong turtle could not be easily be corrected. 
+Records had to be completely deleted from the database and re-entered, 
+so a stored procedure was developed to handle this. 
+
+**Note** End of Simon's technical docs.
 
 # Products
+This section outlines the desired products to be created from the tagging data.
+
 ## Gorgon control charts
+For the Gorgon reports, the following products are generated:
 
 * Adult survival rate: annual survival probability vs time
 * Breeding omission rate: annual breeding probability vs time
@@ -86,7 +222,10 @@ res
 * Intra-seasonal dynamics: Within season arrival probabilities: probability vs time
 
 ## Tag history
-For each tag ID, one column per year, value 0 (not encountered) or 1 (encountered),
-plus columns for location and species
+For tags (tag IDs = rows), one column per year, value 0 (not encountered) or 1 (encountered),
+plus columns for location and species.
 
 
+
+# Upload
+This section uploads the extracted data to the data catalogue.

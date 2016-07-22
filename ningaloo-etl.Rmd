@@ -27,6 +27,7 @@ Create your own `setup_ckanr.R` from the template `setup_ckanr_template.R`.
 Then, load required libraries and source `setup_ckanr.R`.
 ```{r, warning=FALSE, message=FALSE}
 require(Hmisc)
+require(htmlTable)
 library(tidyr)
 require(dplyr)
 require(lubridate)
@@ -34,16 +35,16 @@ require(ckanr)
 require(DT)
 require(rgdal)
 require(mapview)
-source("setup_ckanr.R")
+source("setup.R")
 ```
 
 # Extract data
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T, message=FALSE}
-# tmp <- tempfile(tmpdir="data")
-# download.file(resource_show(MDB_RID)$url, tmp)
-# dbfile <- unzip(tmp, "ningaloov4.mdb")
-dbfile <- "data/ningaloov4.mdb"
+tmp <- tempfile(tmpdir="data")
+download.file(resource_show(MDB_RID)$url, tmp)
+dbfile <- unzip(tmp, "ningaloov4.mdb")
+# dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 contents(con)
 ```
@@ -65,16 +66,16 @@ sites <- con$tblSections %>%
     subsection=as.character(txtSubSection),
     lat=-as.numeric(SubSect.center.lat),
     lon=as.numeric(SubSect.center.long),
-    ymax=-as.numeric(SubSect.NE.lat),
-    ymin=-as.numeric(SubSect.SW.lat),
-    xmax=as.numeric(SubSect.NE.long),
-    xmin=as.numeric(SubSect.SW.long))
+    y_max=-as.numeric(SubSect.NE.lat),
+    y_min=-as.numeric(SubSect.SW.lat),
+    x_max=as.numeric(SubSect.NE.long),
+    x_min=as.numeric(SubSect.SW.long))
 row.names(sites) <- sites$id
 
 # Manually fix mising NE corner of Red Bluff
 # Note: this is a temporary measure until the Access db is updated
-sites[which(sites$subsection=="Red Bluff"),]$xmax <- 113.458
-sites[which(sites$subsection=="Red Bluff"),]$ymax <- -24.016
+sites[which(sites$subsection=="Red Bluff"),]$x_max <- 113.458
+sites[which(sites$subsection=="Red Bluff"),]$y_max <- -24.016
 
 write.csv(sites, file = "data/sites.csv", row.names=F)
 ```
@@ -87,11 +88,11 @@ of a polygon shapefile.
 ```{r}
 coords <- sites %>%
   transmute(
-    sw.lon=xmin, sw.lat=ymin,
-    se.lon=xmax, se.lat=ymin,
-    ne.lon=xmax, ne.lat=ymax,
-    nw.lon=xmin, nw.lat=ymax,
-    end.lon=xmin, end.lat=ymin) %>%
+    sw.lon=x_min, sw.lat=y_min,
+    se.lon=x_max, se.lat=y_min,
+    ne.lon=x_max, ne.lat=y_max,
+    nw.lon=x_min, nw.lat=y_max,
+    end.lon=x_min, end.lat=y_min) %>%
   as.matrix()
 ```
 
@@ -152,16 +153,24 @@ The boolean indicator for disturbance `Ysn.id` is 1 for yes (good practice) and 
 for no (normally 0 means no). We will keep the 1 for yes and change all occurrences
 of the number 2 to 0 to align this field with the other boolean fields.
 
+The seasons begin after October and end before April, so we'll assume that we can
+infer the season by a watershed month of July - e.g. observations betweeen 
+Aug and Dec 2012 will be considered season 2013-2014, while observations between 
+Jan and Jul 2012 will be considered seasin 2011-2012. Therefore, we won't need the 
+seasons table at all.
+
 ```{r}
 ord <- c("mdyHMS")
-tz <- "Australia/Perth"
+tz <- "UTC"
+
 surveys <- con$tblDBAreaSurveyed %>%
   left_join(con$tblEnvironCond, by="date.id") %>%
   mutate(
-    date.id=parse_date_time(date.id, orders=ord, tz=tz),
-    time.HT=parse_date_time(time.HT, orders=ord, tz=tz)) %>%
-  mutate(
-    time.HT=date.id + hour(time.HT) + minute(time.HT) + second(time.HT)) %>%
+    date.id=parse_date_time(date.id, ord, tz),
+    time.HT=parse_date_time(time.HT, ord, tz),
+    time.HT=date.id + hour(time.HT) + minute(time.HT) + second(time.HT),
+    season=ifelse(month(date.id) > 7, year(date.id), year(date.id)-1)
+    ) %>%
   rename(
     date=date.id,
     survey_id=area.svyd.id,
@@ -178,14 +187,13 @@ surveys <- con$tblDBAreaSurveyed %>%
     air_temp=air.temp,
     water_temp=water.temp,
     time_of_high_tide=time.HT,
-    height_of_high_tide=hght.HT) %>%
-  left_join(sites, by=c("division","section", "subsection")) %>%
-  select(
-    -starts_with("Ysn.id"), -starts_with("sw"), -starts_with("se"), 
-    -starts_with("nw"), -starts_with("ne")) %>%
-  select(survey_id, date, division, section, subsection, everything())
+    height_of_high_tide=hght.HT
+    ) %>%
+  left_join(sites, by=c("division","section", "subsection")) 
 
+# Fix non-standard boolean values for yes/no lookups
 surveys[which(surveys$site_disturbed==2),]$site_disturbed=0
+
 write.csv(surveys, file = "data/surveys.csv", row.names=F)
 # DT::datatable(surveys)
 ```
@@ -263,7 +271,7 @@ nests <- con$tblDBNestingSurvey %>%
   inner_join(surveys, by="survey_id") %>%
   select(
     survey_id, nest_id, division, section, subsection,
-    date, longitude, latitude, 
+    date, season, longitude, latitude, 
     species_name, nest_type, position, confidence,
     track_origin, track_id, track_id2, 
     nest_disturbed, fox_tracks_present, dog_tracks_present, 
@@ -300,6 +308,41 @@ write.csv(summary_nests, file = "data/summary_nests.csv", row.names=F)
 DT::datatable(summary_nests)
 ```
 
+
+```{r}
+summary_nests_seasons <- tbl_df(nests) %>%
+  filter(nest_type=="New") %>%
+  group_by(subsection, season, species_name) %>%
+  tally(sort=T) %>%
+  ungroup() %>%
+  spread(species_name, n, fill=0) %>%
+  inner_join(sites, by="subsection") %>%
+  select(-x_max, -x_min, -y_max, -y_min)
+write.csv(summary_nests_seasons, file = "data/summary_nests_seasons.csv", row.names=F)
+DT::datatable(summary_nests_seasons)
+
+
+# Follow http://environmentalinformatics-marburg.github.io/mapview/popups/html/popups.html
+# to show subsection summaries over subsection polygons on map
+#
+# make_popup <- function(subsec){
+#   htmlTable(
+#     summary_nests_seasons %>%
+#     filter(subsection==subsec) %>%
+#       select(subsection, season, Green, Loggerhead, Hawksbill, Flatback, Unidentified) %>%
+#       arrange(subsection, season)
+#     )
+#   }
+# sites <- mutate(sites, popup=make_popup(subsection))
+# row.names(sites) <- sites$id
+# polys.df <- SpatialPolygonsDataFrame(polys, as.data.frame(sites))
+# writeOGR(polys.df, "data/sites.geojson", layer="geojson", driver="GeoJSON")
+# mapview(polys.df)
+
+```
+Be aware that the 278 season / subsection summaries are duplicated partially
+for "Baiting 1080" site duplicates.
+
 ### False crawls by survey
 The sum of false crawls for every unique combination of survey (subsection, date)
 and species.
@@ -312,7 +355,8 @@ summary_crawls <- tbl_df(crawls) %>%
   tally(sort=F) %>%
   ungroup() %>%
   spread(species_name, n, fill=0) %>%
-  inner_join(surveys)
+  inner_join(surveys) %>%
+  select(-x_max, -x_min, -y_max, -y_min)
 write.csv(summary_crawls, file = "data/summary_crawls.csv", row.names=F)
 DT::datatable(summary_crawls)
 ```
@@ -375,18 +419,19 @@ DT::datatable(filter(cr, is.na(species_name))[,1:8])
 # Load
 Upload outputs to CKAN.
 ```{r}
-ckanr::resource_update(ETL_RID, "ningaloo-etl.html")
 ckanr::resource_update(SITES_RID, path="data/sites.geojson")
 ckanr::resource_update(SITES_CSV_RID, path="data/sites.csv")
 ckanr::resource_update(SURVEYS_RID, path="data/surveys.csv")
 ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
 ckanr::resource_update(NEST_RID, "data/nests.csv")
 ckanr::resource_update(NEW_NEST_RID, "data/summary_nests.csv")
+ckanr::resource_update(NEST_SEASON_RID, "data/summary_nests_seasons.csv")
 ckanr::resource_update(FALSE_CRAWL_RID, "data/summary_crawls.csv")
 ```
 
 # Cleanup
 Close the temporary file.
 ```{r}
-# unlink(tmp)
+unlink(tmp)
+file.remove(dbfile)
 ```

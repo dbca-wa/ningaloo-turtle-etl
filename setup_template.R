@@ -16,7 +16,7 @@ FALSE_CRAWL_RID="1c7ec216-bc28-4181-bf8a-2d1528f61717"
 
 
 # MS SQL Server for tagging db
-SRV='db-server-name'
+SRV='db-server'
 DB='db-name'
 UN='db-username'
 PW='db-password'

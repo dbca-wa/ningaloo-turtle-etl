@@ -23,12 +23,13 @@ vignettes/*.pdf
 *.utf8.md
 *.knit.md
 .Rproj.user
+
 # data folder
 data/
 setup_ckanr.R
-ningaloo-etl.html
-sites.geojson
-sites.qgs
-ningaloov4.mdb
-spatial_modelling.html
+
+# workbook outputs
+*.html
+
+# sensitive files
 setup.R
