@@ -13,6 +13,7 @@ require(ckanr)
 require(DT)
 require(rgdal)
 require(mapview)
+library(leaflet)
 require(vegan)
 require(RODBC)
 source("setup.R")
@@ -202,6 +203,83 @@ Records had to be completely deleted from the database and re-entered,
 so a stored procedure was developed to handle this. 
 
 **Note** End of Simon's technical docs.
+
+# Data
+This section aims to extract the raw data from the database.
+
+## Sites
+Nesting beaches are stored in table `TRT_PLACES`.
+```{r}
+sites <- sqlQuery(con, "select * from dbo.TRT_PLACES;")
+
+sites_with_coordinates <- sites %>% filter(!is.na(LATITUDE))
+ico <- makeAwesomeIcon(icon="cog", lib="glyphicon")
+leaflet(sites_with_coordinates) %>% 
+  addProviderTiles("Esri.WorldImagery") %>% 
+  setView(lng=120, lat=-20, zoom=5) %>%
+  addAwesomeMarkers(~LONGITUDE, ~LATITUDE, label=~PLACE_NAME, icon=ico)
+```
+
+Some sites are missing coordinates and need to be fixed in `TRT_PLACES`:
+
+```{r}
+badsites <- sites %>% filter(is.na(LATITUDE) | is.na(LONGITUDE))
+DT::datatable(badsites)
+```
+
+
+## Observations
+
+```{r}
+obs <- sqlQuery(con, "select * from dbo.TRT_OBSERVATIONS;")
+persons <- sqlQuery(con, "select * from dbo.TRT_PERSONS;")
+activities <- sqlQuery(con, "select * from dbo.TRT_ACTIVITIES;")
+beach_positions <- sqlQuery(con, "select * from dbo.TRT_BEACH_POSITIONS;")
+conditions <-  sqlQuery(con, "select * from dbo.TRT_CONDITION_CODES;")
+egg_count_methods <-  sqlQuery(con, "select * from dbo.TRT_EGG_COUNT_METHODS;")
+
+measurements <- sqlQuery(con, "select * from dbo.TRT_MEASUREMENTS;")
+measurement_types <- sqlQuery(con, "select * from dbo.TRT_MEASUREMENT_TYPES;")
+
+damages <- sqlQuery(con, "select * from dbo.TRT_DAMAGE;")
+body_parts <- sqlQuery(con, "select * from dbo.TRT_BODY_PARTS;")
+damage_causes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CAUSE_CODES;")
+damage_codes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CODES;")
+
+datum_codes <- sqlQuery(con, "select * from dbo.TRT_DATUM_CODES;")
+
+recorded_tags <- sqlQuery(con, "select * from dbo.TRT_RECORDED_TAGS;")
+id_types <- sqlQuery(con, "select * from dbo.TRT_IDENTIFICATION_TYPES;")
+
+turtles <- sqlQuery(con, "select * from dbo.TRT_TURTLES;")
+tags <- sqlQuery(con, "select * from dbo.TRT_TAGS;")
+
+samples <- sqlQuery(con, "select * from dbo.TRT_SAMPLES;")
+sample_tissue_type <- sqlQuery(con, "select * from dbo.TRT_TISSUE_TYPES;")
+
+pit_tags <- sqlQuery(con, "select * from dbo.TRT_PIT_TAGS;")
+recorded_pit_tags <- sqlQuery(con, "select * from dbo.TRT_RECORDED_PIT_TAGS;")
+pit_tag_states <- sqlQuery(con, "select * from dbo.TRT_PIP_TAG_STATES;")
+
+ord <- c("YmdHMS", "Ymd")
+utc <- "UTC"
+gmt08 <- "Australia/Perth"
+
+o <- obs %>%
+  mutate(
+    o_date=parse_date_time(CORRECTED_DATE, orders=ord, tz=gmt08),
+    o_time=parse_date_time(OBSERVATION_TIME, orders=ord, tz=gmt08),
+    observation_datetime_gmt08=o_date + hours(hour(o_time)) + minutes(minute(o_time)),
+    observation_datetime_utc=with_tz(observation_datetime_gmt08, tz=utc)
+  ) %>%
+  select(
+    -OBSERVATION_DATE, -OBSERVATION_TIME, -OBSERVATION_DATE_OLD, 
+    -CORRECTED_DATE, -o_date, -o_time, -DATE_CONVENTION
+  )
+
+DT::datatable(head(o))
+
+```
 
 # Products
 This section outlines the desired products to be created from the tagging data.
