@@ -6,10 +6,12 @@ output: html_document
 ---
 This workbook executes and documents the extraction, transformation and loading
 (ETL) of Ningaloo Turtle Program data from the original Access database into
-accessible formats. Data are read from a snapshot of the original database on the internal data catalogue, processed locally, and uploaded as various outputs 
+accessible formats. Data are read from a snapshot of the original database on 
+the internal data catalogue, processed locally, and uploaded as various outputs 
 back to the data catalogue.
 
-**Note** The data shown are not yet fully quality controlled, and therefore could contain duplication or gaps. This notebook currently is a work in progress.
+**Note** The data shown are not yet fully quality controlled, and therefore 
+could contain duplication or gaps. This notebook currently is a work in progress.
 
 # Install
 Install required packages by running `install.R` once in your Ubuntu environment.
@@ -42,9 +44,9 @@ source("setup.R")
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T, message=FALSE}
 tmp <- tempfile(tmpdir="data")
-download.file(resource_show(MDB_RID)$url, tmp)
-dbfile <- unzip(tmp, "ningaloov4.mdb")
-# dbfile <- "data/ningaloov4.mdb"
+# download.file(resource_show(MDB_RID)$url, tmp)
+# dbfile <- unzip(tmp, "ningaloov4.mdb")
+dbfile <- "data/ningaloov4.mdb"
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 contents(con)
 ```
@@ -81,7 +83,8 @@ write.csv(sites, file = "data/sites.csv", row.names=F)
 ```
 
 ### Shapefiles - R style
-Following Stackoverflow user [jbaum](http://stackoverflow.com/users/489704/jbaums)'s [example](http://stackoverflow.com/a/26620550/2813717), we create the R equivalent
+Following Stackoverflow user [jbaum](http://stackoverflow.com/users/489704/jbaums)'s 
+[example](http://stackoverflow.com/a/26620550/2813717), we create the R equivalent
 of a polygon shapefile.
 
 `coords` is a matrix containing the five coordinate pairs (columns) for all sites (rows).
@@ -292,7 +295,8 @@ Steps:
 
 * Filter the nest observations to new nests only
 * Group by unique combinations of subsection and date (= surveys) and species name
-* Count the observations of each group (= total number of nests of species x seen on date y at subsection z)
+* Count the observations of each group (= total number of nests of species x 
+  seen on date y at subsection z)
 * Append survey level data
 * Save to CSV and show as interactive datatable
 
@@ -419,14 +423,14 @@ DT::datatable(filter(cr, is.na(species_name))[,1:8])
 # Load
 Upload outputs to CKAN.
 ```{r}
-ckanr::resource_update(SITES_RID, path="data/sites.geojson")
-ckanr::resource_update(SITES_CSV_RID, path="data/sites.csv")
-ckanr::resource_update(SURVEYS_RID, path="data/surveys.csv")
-ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
-ckanr::resource_update(NEST_RID, "data/nests.csv")
-ckanr::resource_update(NEW_NEST_RID, "data/summary_nests.csv")
-ckanr::resource_update(NEST_SEASON_RID, "data/summary_nests_seasons.csv")
-ckanr::resource_update(FALSE_CRAWL_RID, "data/summary_crawls.csv")
+# ckanr::resource_update(SITES_RID, path="data/sites.geojson")
+# ckanr::resource_update(SITES_CSV_RID, path="data/sites.csv")
+# ckanr::resource_update(SURVEYS_RID, path="data/surveys.csv")
+# ckanr::resource_update(CRAWL_RID, "data/crawls.csv")
+# ckanr::resource_update(NEST_RID, "data/nests.csv")
+# ckanr::resource_update(NEW_NEST_RID, "data/summary_nests.csv")
+# ckanr::resource_update(NEST_SEASON_RID, "data/summary_nests_seasons.csv")
+# ckanr::resource_update(FALSE_CRAWL_RID, "data/summary_crawls.csv")
 ```
 
 # Cleanup

@@ -1,0 +1,53 @@
+---
+title: "WAStD API"
+author: "Florian Mayer"
+date: "19 September 2016"
+output: html_document
+---
+
+# Known to be alive
+The following example demonstrates how data from the WAStD API can be extracted
+and manipulated easily into a format suitable for KTBA analyses, e.g. through
+the program MARK.
+
+First, Animal Encounters are extracted in CSV format from their 
+[API endpoint](http://localhost:8220/api/1/animal-encounters/).
+
+```{r, message=F}
+require(dplyr)
+require(tidyr)
+require(lubridate)
+require(DT)
+
+d <- read.csv("http://localhost:8220/api/1/animal-encounters/?format=csv", as.is=T)
+```
+
+Then, the data are:
+
+* cast into a highly performant data type (data table tbl),
+* filtered so that anonymous animals (without a tag history) are excluded,
+* allocated to seasons (financial years), which will work for all turtles curteous
+  enough not to nest in winter, especially across June/July,
+* pivoted into a name (rows) by season (columns) table of encounter tallies (number
+  of encounters in that season)
+  
+```{r}
+data <- tbl_df(d) %>%
+  filter(!(name=="")) %>%
+  mutate(
+    when=parse_date_time(when, orders=c("ymdHMSz")),
+    season=ifelse(month(when) > 7, year(when), year(when)-1)
+  ) %>%
+  group_by(name, season) %>%
+  tally(sort=T) %>%
+  ungroup() %>%
+  spread(season, n, fill=0)
+```
+
+The data can now be saved to CSV for later use in MARK, or piped into RMARK, or
+inspected here.
+
+```{r, echo=FALSE}
+# write.csv(data, file = "data/turtle_ktba.csv", row.names=F)
+DT::datatable(data)
+```

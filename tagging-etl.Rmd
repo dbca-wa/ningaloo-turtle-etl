@@ -25,11 +25,14 @@ of data from the Turtle Tagging database WAMTRAM 2 to the data catalogue.
 It is based on technical documentation provided by Simon Woodman.
 
 # Installation
-Setup RODBC as per [the instructions](http://itsalocke.com/install-sql-server-odbc-drivers-travis-ci/)
-and configure an ODBC data source for the tagging database, e.g. crying / curling 
-up into a ball and ask an experienced user configure the ODBC data source in 
-Control Panel > ODBC Data Sources (Windows), going to the Apple store and buying 
-a new MacBook Pro (Apple), or writing three lines to a file `~/.odbc.ini` (Linux):
+Setup RODBC as per 
+[the instructions](http://itsalocke.com/install-sql-server-odbc-drivers-travis-ci/)
+and configure an ODBC data source for the tagging database, e.g. 
+
+* in Windows: crying, curling up into a ball and ask an experienced user to 
+  configure the ODBC data source in Control Panel > ODBC Data Sources, 
+* Apple: going to the Apple store and buying a new MacBook Pro, or 
+* Linux: writing three lines to a file `~/.odbc.ini`:
 
 ```{r, eval=F}
 [turtle_tagging]
@@ -37,10 +40,18 @@ Driver = ODBC Driver 13 for SQL Server
 Server = THE_MSSQL_SERVER_DNSNAME
 ```
 
-See also the [RODBC vigette](https://cran.r-project.org/web/packages/RODBC/vignettes/RODBC.pdf).
+See also the 
+[RODBC vigette](https://cran.r-project.org/web/packages/RODBC/vignettes/RODBC.pdf).
 
 # Purpose
-The purpose of this document is to outline the code contained within the SQL Server WA Marine Turtles Database. Primarily the code is for the processing of Turtle observation records captured using the Microsoft Access application developed by Pendoley Environmental. Originally the main Turtle database application had a "flat-file" base data entry process, but this was subsequently replaced by the Pendoley Environmental application. Problems with the transfer of data from the data entry program into the main database prompted a re-development of the process, which is described in this document.
+The purpose of this document is to outline the code contained within the 
+SQL Server WA Marine Turtles Database. Primarily the code is for the processing 
+of Turtle observation records captured using the Microsoft Access application 
+developed by Pendoley Environmental. Originally the main Turtle database 
+application had a "flat-file" base data entry process, but this was subsequently 
+replaced by the Pendoley Environmental application. 
+Problems with the transfer of data from the data entry program into the main d
+atabase prompted a re-development of the process, which is described in this document.
 
 # Field data ingestion
 
@@ -80,7 +91,16 @@ If the record has not been successfully transferred to the main data tables,
 the fields `ERROR_NUMBER` and `ERROR_MESSAGE` will be populated instead. 
 
 ## `TRT_DATA_ENTRY_PERSONS`
-This table stores a list of people appearing in the data entry records for each batch. Individual people are defined in the TRT_PERSONS table. Historically there was an issue with the TRT_PERSONS table being populated by large number of duplicate records. The re-development addressed this issue by using the TRT_DATA_ENTRY_PERSONS table to define the unique people recorded in each batch, along with the mapping to the appropriate record in the TRT_PERSONS table. The records in this table are partially populated by the main WA Marine Turtles application, and interactively by the user performing the processing of the batch. 
+This table stores a list of people appearing in the data entry records for each batch. 
+Individual people are defined in the `TRT_PERSONS` table. 
+Historically there was an issue with the `TRT_PERSONS` table being populated by a
+large number of duplicate records. 
+
+The re-development addressed this issue by using the `TRT_DATA_ENTRY_PERSONS` 
+table to define the unique people recorded in each batch, 
+along with the mapping to the appropriate record in the `TRT_PERSONS` table. 
+The records in this table are partially populated by the main WA Marine Turtles 
+application, and interactively by the user performing the processing of the batch. 
 
 ## Data entry summary
 There are `r nrow(entry_batches)` batches of data presently loaded, 
@@ -210,48 +230,115 @@ This section aims to extract the raw data from the database.
 ## Sites
 Nesting beaches are stored in table `TRT_PLACES`.
 ```{r}
-sites <- sqlQuery(con, "select * from dbo.TRT_PLACES;")
+sites <- sqlQuery(con, "select * from dbo.TRT_PLACES;") %>%
+  rename(
+    prefix=LOCATION_CODE,
+    name=PLACE_CODE,
+    label=PLACE_NAME,
+    is_rookery=ROOKERY,
+    beach_approach=BEACH_APPROACH,
+    beach_aspect=ASPECT,
+    datum=DATUM_CODE,
+    latitude=LATITUDE,
+    longitude=LONGITUDE,
+    comments=COMMENTS
+  )
 
-sites_with_coordinates <- sites %>% filter(!is.na(LATITUDE))
+sites_with_coordinates <- sites %>% filter(!is.na(latitude))
 ico <- makeAwesomeIcon(icon="cog", lib="glyphicon")
 leaflet(sites_with_coordinates) %>% 
   addProviderTiles("Esri.WorldImagery") %>% 
   setView(lng=120, lat=-20, zoom=5) %>%
-  addAwesomeMarkers(~LONGITUDE, ~LATITUDE, label=~PLACE_NAME, icon=ico)
+  addAwesomeMarkers(~longitude, ~latitude, label=~label, icon=ico)
 ```
 
 Some sites are missing coordinates and need to be fixed in `TRT_PLACES`:
 
 ```{r}
-badsites <- sites %>% filter(is.na(LATITUDE) | is.na(LONGITUDE))
+badsites <- sites %>% filter(is.na(latitude) | is.na(longitude))
 DT::datatable(badsites)
 ```
 
+Most of these are offshore, in-water captures/releases.
+
+**Task** The database custodian needs to sit with a GIS analyst to 
+digitise all `r nrow(sites)` sites as polygons.
 
 ## Observations
+Ancillary lookup tables are sanitised and joined to the observations.
 
 ```{r}
-obs <- sqlQuery(con, "select * from dbo.TRT_OBSERVATIONS;")
+# Sensitive information!
 persons <- sqlQuery(con, "select * from dbo.TRT_PERSONS;")
-activities <- sqlQuery(con, "select * from dbo.TRT_ACTIVITIES;")
-beach_positions <- sqlQuery(con, "select * from dbo.TRT_BEACH_POSITIONS;")
-conditions <-  sqlQuery(con, "select * from dbo.TRT_CONDITION_CODES;")
-egg_count_methods <-  sqlQuery(con, "select * from dbo.TRT_EGG_COUNT_METHODS;")
+person_names <- persons %>%
+  transmute(
+    PERSON_ID=PERSON_ID,
+    name=paste(FIRST_NAME, SURNAME, EMAIL)
+  )
 
-measurements <- sqlQuery(con, "select * from dbo.TRT_MEASUREMENTS;")
-measurement_types <- sqlQuery(con, "select * from dbo.TRT_MEASUREMENT_TYPES;")
+activities <- sqlQuery(
+    con, "select * from dbo.TRT_ACTIVITIES;") %>%
+  transmute(
+    activity_code=ACTIVITY_CODE,
+    activity_description=DESCRIPTION,
+    activity_is_nesting=NESTING,
+    activity_label=New_Code,
+    display_this_observation=Display_Observation)
 
-damages <- sqlQuery(con, "select * from dbo.TRT_DAMAGE;")
-body_parts <- sqlQuery(con, "select * from dbo.TRT_BODY_PARTS;")
-damage_causes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CAUSE_CODES;")
-damage_codes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CODES;")
+beach_positions <- sqlQuery(
+    con, "select * from dbo.TRT_BEACH_POSITIONS;") %>%
+  transmute(
+    beach_position_code=BEACH_POSITION_CODE,
+    beach_position_description=DESCRIPTION, 
+    beach_position_label=New_Code)
 
+conditions <-  sqlQuery(
+    con, "select * from dbo.TRT_CONDITION_CODES;") %>%
+  transmute(
+    condition_code=CONDITION_CODE,
+    condition_label=DESCRIPTION)
+
+egg_count_methods <-  sqlQuery(
+    con, "select * from dbo.TRT_EGG_COUNT_METHODS;") %>%
+  transmute(
+    egg_count_method_code=EGG_COUNT_METHOD,
+    egg_count_method_label=DESCRIPTION)
+
+body_parts <- sqlQuery(
+    con, "select * from dbo.TRT_BODY_PARTS;") %>%
+  transmute(
+    body_part_code=BODY_PART,
+    body_part_label=DESCRIPTION,
+    is_flipper=FLIPPER)
+
+# use native datum conversion instead
 datum_codes <- sqlQuery(con, "select * from dbo.TRT_DATUM_CODES;")
 
-recorded_tags <- sqlQuery(con, "select * from dbo.TRT_RECORDED_TAGS;")
-id_types <- sqlQuery(con, "select * from dbo.TRT_IDENTIFICATION_TYPES;")
+# Tag types
+id_types <- sqlQuery(
+    con, "select * from dbo.TRT_IDENTIFICATION_TYPES;") %>%
+  transmute(
+    id_type_code=IDENTIFICATION_TYPE,
+    id_type_label=DESCRIPTION)
 
+# 200k records
+recorded_tags <- sqlQuery(
+    con, "select * from dbo.TRT_RECORDED_TAGS;") %>%
+  transmute(
+    recorded_tag_id=RECORDED_TAG_ID,
+    observation_id=OBSERVATION_ID,
+    tag_name=TAG_ID,
+    tag_label=OTHER_TAG_ID,
+    attached_on_side=SIDE,
+    tag_state=TAG_STATE,
+    tag_position=TAG_POSITION,
+    comments=COMMENTS
+  )
+
+# 51k inferred turtle identities
 turtles <- sqlQuery(con, "select * from dbo.TRT_TURTLES;")
+summary(turtles)
+
 tags <- sqlQuery(con, "select * from dbo.TRT_TAGS;")
 
 samples <- sqlQuery(con, "select * from dbo.TRT_SAMPLES;")
@@ -260,6 +347,35 @@ sample_tissue_type <- sqlQuery(con, "select * from dbo.TRT_TISSUE_TYPES;")
 pit_tags <- sqlQuery(con, "select * from dbo.TRT_PIT_TAGS;")
 recorded_pit_tags <- sqlQuery(con, "select * from dbo.TRT_RECORDED_PIT_TAGS;")
 pit_tag_states <- sqlQuery(con, "select * from dbo.TRT_PIP_TAG_STATES;")
+```
+
+Observations.
+```{r}
+measurement_types <- sqlQuery(
+    con, "select * from dbo.TRT_MEASUREMENT_TYPES;") %>%
+  transmute(
+    measurement_type_code=MEASUREMENT_TYPE,
+    measurement_type_label=DESCRIPTION,
+    physical_unit=MEASUREMENT_UNITS,
+    min_value=MINIMUM_VALUE,
+    max_value=MAXIMUM_VALUE,
+    comments=COMMENTS)
+
+measurements <- sqlQuery(
+    con, "select * from dbo.TRT_MEASUREMENTS;") %>%
+  transmute(
+    observation_id=OBSERVATION_ID,
+    measurement_type_code=MEASUREMENT_TYPE,
+    value=MEASUREMENT_VALUE,
+    comments=COMMENTS)
+
+
+damage_codes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CODES;")
+damage_causes <- sqlQuery(con, "select * from dbo.TRT_DAMAGE_CAUSE_CODES;")
+damages <- sqlQuery(con, "select * from dbo.TRT_DAMAGE;")
+
+
+obs <- sqlQuery(con, "select * from dbo.TRT_OBSERVATIONS;")
 
 ord <- c("YmdHMS", "Ymd")
 utc <- "UTC"
@@ -272,13 +388,18 @@ o <- obs %>%
     observation_datetime_gmt08=o_date + hours(hour(o_time)) + minutes(minute(o_time)),
     observation_datetime_utc=with_tz(observation_datetime_gmt08, tz=utc)
   ) %>%
+  rename(
+    activity_code=ACTIVITY_CODE
+  ) %>%
+  left_join(activities, by="activity_code") %>%
+  # left_join(sites, by="PLACE_CODE") %>%
   select(
-    -OBSERVATION_DATE, -OBSERVATION_TIME, -OBSERVATION_DATE_OLD, 
-    -CORRECTED_DATE, -o_date, -o_time, -DATE_CONVENTION
+    -OBSERVATION_DATE, -OBSERVATION_TIME, -OBSERVATION_DATE_OLD, -CORRECTED_DATE, 
+    -DATE_CONVENTION, -o_date, -o_time
   )
 
+head(o)
 DT::datatable(head(o))
-
 ```
 
 # Products

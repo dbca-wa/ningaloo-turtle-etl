@@ -8,9 +8,27 @@ require(rgdal)
 require(mapview)
 require(vegan)
 require(RODBC)
-source("setup_ckanr.R")
+source("setup.R")
 
 load("data/working_data.RData")
 
-con <- odbcDriverConnect(TAG_CON)
-res <- sqlQuery(con, 'select * from information_schema.tables')
+install.packages("htmlTable")
+require(htmlTable)
+output <- matrix(1:4,
+                 ncol=2,
+                 dimnames = list(list("Row 1", "Row 2"),
+                                 list("Column 1", "Column 2")))
+z <- htmlTable(output)
+z
+
+
+d <- summary_nests_seasons %>% group_by(subsection) %>% htmlTable() %>% ungroup()
+
+d <- sites %>% mutate(popup=make_popup(subsection))
+
+
+make_popup <- function(subsection){
+  htmlTable(filter(summary_nests_seasons, subsection==subsection))
+}
+
+
