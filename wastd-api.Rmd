@@ -13,6 +13,12 @@ the program MARK.
 First, Animal Encounters are extracted in CSV format from their 
 [API endpoint](http://localhost:8220/api/1/animal-encounters/).
 
+Note this link currently points to a development version of WAStD, as the 
+[public API](https://strandings-test.dpaw.wa.gov.au/api/1/animal-encounters/) lies
+behind an authentication firewall. Authenticated users however can download the 
+CSV version through the web version (link above > Get > CSV), then `read.csv()`
+that file here.
+
 ```{r, message=F}
 require(dplyr)
 require(tidyr)
@@ -20,6 +26,7 @@ require(lubridate)
 require(DT)
 
 d <- read.csv("http://localhost:8220/api/1/animal-encounters/?format=csv", as.is=T)
+# d <- read.csv("path/to/download.csv", as.is=T)
 ```
 
 Then, the data are:
