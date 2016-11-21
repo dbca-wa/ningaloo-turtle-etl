@@ -1,7 +1,7 @@
 ---
-title: "WAStD API"
+title: "WA Sea Turtles Database (WAStD) API"
 author: "Florian Mayer"
-date: "19 September 2016"
+date: "10 October 2016"
 output: html_document
 ---
 
@@ -11,50 +11,77 @@ and manipulated easily into a format suitable for KTBA analyses, e.g. through
 the program MARK.
 
 First, Animal Encounters are extracted in CSV format from their 
-[API endpoint](http://localhost:8220/api/1/animal-encounters/).
+[API endpoint](https://strandings.dpaw.wa.gov.au/api/1/animal-encounters/).
 
-Note this link currently points to a development version of WAStD, as the 
-[public API](https://strandings-test.dpaw.wa.gov.au/api/1/animal-encounters/) lies
-behind an authentication firewall. Authenticated users however can download the 
-CSV version through the web version (link above > Get > CSV), then `read.csv()`
-that file here.
+Note, this API endpoint is currently restricted to the Dept Parks & Wildlife's intranet.
 
+## Reading the data from the WAStD API
 ```{r, message=F}
 require(dplyr)
 require(tidyr)
 require(lubridate)
+require(ggplot2)
 require(DT)
 
-d <- read.csv("http://localhost:8220/api/1/animal-encounters/?format=csv", as.is=T)
+d <- read.csv("https://strandings.dpaw.wa.gov.au/api/1/animal-encounters/?format=csv", as.is=T)
 # d <- read.csv("path/to/download.csv", as.is=T)
 ```
 
-Then, the data are:
+TODO: show how to filter to a nesting population
 
-* cast into a highly performant data type (data table tbl),
-* filtered so that anonymous animals (without a tag history) are excluded,
-* allocated to seasons (financial years), which will work for all turtles curteous
-  enough not to nest in winter, especially across June/July,
+## Inspecting the data
+As turtles may have different nesting seasons, let's inspect the data visually
+to decide where to put the season cutoff date.
+
+```{r}
+daily <- d %>% 
+  filter(!(name=="")) %>%
+  mutate(week=isoweek(as.Date(when))) %>%
+  group_by(week) %>% 
+  tally(sort=T)
+
+ggplot(daily, aes(x=week)) + 
+  stat_bin(binwidth=1, position="identity") + 
+  ggtitle("Weekly Animal Encounter Tally")
+```
+
+In this example, we use the fiscal year (starting July 1, isoweek 28) as a season proxy. 
+However, winter nesters (like Flatbacks at Cape Dommett) might need to follow 
+a different seasonality, e.g. the calendar year.
+
+## Pivoting the data into MARK format
+Once we have decided on a season cutoff date, the data are:
+
+* cast into a highly performant data type (data table tbl);
+* filtered so that anonymous animals (without a tag history) are excluded;
+* allocated to seasons starting July 1 and ending June 30, which will work for 
+  all turtles courteous enough not to nest in winter, especially not across June/July;
 * pivoted into a name (rows) by season (columns) table of encounter tallies (number
-  of encounters in that season)
+  of encounters in that season).
   
 ```{r}
 data <- tbl_df(d) %>%
   filter(!(name=="")) %>%
   mutate(
     when=parse_date_time(when, orders=c("ymdHMSz")),
-    season=ifelse(month(when) > 7, year(when), year(when)-1)
+    season=ifelse(isoweek(when) > 27, year(when), year(when)-1)
   ) %>%
   group_by(name, season) %>%
   tally(sort=T) %>%
   ungroup() %>%
   spread(season, n, fill=0)
+DT::datatable(data)
 ```
 
 The data can now be saved to CSV for later use in MARK, or piped into RMARK, or
 inspected here.
-
-```{r, echo=FALSE}
-# write.csv(data, file = "data/turtle_ktba.csv", row.names=F)
-DT::datatable(data)
+```{r, eval=FALSE}
+write.csv(data, file = "data/turtle_ktba.csv", row.names=F)
 ```
+
+
+Further steps:
+
+* Transform the tally (potentially several encounters with the same animal 
+  within one season) into a binary absence/presence indicator.
+* Display years with missing encounters.

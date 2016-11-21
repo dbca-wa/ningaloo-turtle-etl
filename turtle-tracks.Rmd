@@ -1,0 +1,94 @@
+---
+title: "Turtle Tracks"
+author: "Florian Mayer"
+date: "19 November 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(Hmisc)
+library(tidyr)
+require(dplyr)
+require(lubridate)
+require(ckanr)
+require(DT)
+require(mapview)
+```
+
+## Using downloaded data
+
+Download CSV from the [Google Fusion Table](https://fusiontables.google.com/DataSource?docid=1wL_dSRNuUCyukJjiUo8RDvFQ0ejWoRpJo2p3S5Rm#map:id=6)
+of track counts.
+
+Timestamps of observation date and time are stored in local time by the data collection app. 
+We extract the date (dmY) from the timestamp `observation_start_time` into a new 
+variable `observation_date`.
+
+Test observations before the start of field work are excluded.
+
+If given, the first of each nest's damage obsevations is shown. If a nest has
+several damage observations, the additional observations beyond the first one
+will turn up in a separate table, but now shown here.
+
+The basic structure is one record (row) per encountered track (with or without 
+nest):
+
+```{r loaddata}
+ord <- c("mdYHMOS")
+utc <- "UTC"
+gmt08 <- "Australia/Perth"
+
+eve_of_fieldwork <- "2016-11-18"
+
+d <- read.csv("data/TrackCount 0.10View.csv", header=T, as.is=T)%>% 
+  mutate(
+    observation_date=as_date(
+      with_tz(
+        parse_date_time(observation_start_time, orders=ord, tz=utc)), gmt08)) %>%
+  filter(observation_date>eve_of_fieldwork)
+glimpse(d)
+```
+
+## Plotting nesting effort
+The aim of this section is to visualise the sum of observed fresh and old tracks,
+grouped by species, and facet-wrapped by sector (pending).
+
+Observations tallied by observation date, species, and nest age:
+
+```{r tally}
+tally_data <- d %>%
+  group_by(observation_date, species, nest_age) %>%
+  tally(sort=F) %>%
+  ungroup()
+DT::datatable(tally_data)
+```
+
+
+```{r}
+ggplot(tally_data, aes(x=observation_date, y=n, colour=species)) +
+  geom_point() + facet_wrap(~nest_age)
+```
+
+
+Observations of fresh tracks or nests, 
+tallied by observation date, species, and nest type:
+```{r}
+tally_fresh <- d %>%
+  filter(nest_age=="fresh") %>%
+  group_by(observation_date, species, nest_type) %>%
+  tally(sort=F) %>%
+  ungroup()
+DT::datatable(tally_fresh)
+```
+
+```{r}
+ggplot(tally_fresh, aes(x=observation_date, y=n, colour=nest_type)) +
+  geom_point() + facet_wrap(~species)
+```
+
+**Note** Track and nest counts within the tagging sector (Jetty to Chevron) 
+from the night of 20/11/2016 to 21/11/2016 were not recorded
+in the ODK Collect app the morning after, as wind and foot traffic during the night
+rendered the tracks unreadable. The tracks and nests were recorded on paper data
+sheets and will turn up in the tagging database WAMTRAM2.

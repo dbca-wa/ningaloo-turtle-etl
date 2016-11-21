@@ -114,12 +114,15 @@ The data is loaded from the data entry file via the Microsoft Access admin front
 but the processing of each record is performed by SQL Server stored procedures. 
 
 ## `dbo.EntryBatchProcess`
-This is the main stored procedure that copies the data from the holding tables into the main application tables, updating the fields `TURTLE_ID`, `OBSERVATION_ID`, `ERROR_NUMBER` and `ERROR_MESSAGE` 
+This is the main stored procedure that copies the data from the holding tables 
+into the main application tables, updating the fields 
+`TURTLE_ID`, `OBSERVATION_ID`, `ERROR_NUMBER` and `ERROR_MESSAGE` 
 where appropriate to indicate success or failure of the process. 
 
-The stored procedure loops through all records in the `TRT_DATA_ENTRY` table for a specified batch. 
-If a record fails validation or an unexpected error occurs, the `ERROR_NUMBER` 
-and `ERROR_MESSAGE` fields are populated and the process continues on to the next record. 
+The stored procedure loops through all records in the `TRT_DATA_ENTRY` table for 
+a specified batch.  If a record fails validation or an unexpected error occurs, 
+the `ERROR_NUMBER` and `ERROR_MESSAGE` fields are populated and the process 
+continues on to the next record. 
 
 If the record is successfully processed then the resulting values for `TURLTE_ID` 
 and `OBSERVATION_ID` are stored in the record. 
@@ -226,6 +229,10 @@ so a stored procedure was developed to handle this.
 
 # Data
 This section aims to extract the raw data from the database.
+
+Note: WAMTRAM 1 has uppercase named tables `TRT_*`,  WAMTRAM 2 
+(Pendoley-Rawcliffe) added lowercased `tbl*` tables.
+
 
 ## Sites
 Nesting beaches are stored in table `TRT_PLACES`.
@@ -401,6 +408,10 @@ o <- obs %>%
 head(o)
 DT::datatable(head(o))
 ```
+
+* obs with OTHER_TAGS_IDENTIFICATION_TYPE == "STRAND/SAL" are untagged strandings
+* TRT_IDENTIFICATION_TYPES = TAG_TYPE
+
 
 # Products
 This section outlines the desired products to be created from the tagging data.

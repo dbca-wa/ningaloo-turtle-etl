@@ -38,15 +38,19 @@ require(DT)
 require(rgdal)
 require(mapview)
 source("setup.R")
+refresh_data <- FALSE # download fresh database snapshot or use local copy
 ```
 
 # Extract data
 Download, unzip and open the Access mdb file from the data catalogue.
 ```{r, echo=T, message=FALSE}
-tmp <- tempfile(tmpdir="data")
-# download.file(resource_show(MDB_RID)$url, tmp)
-# dbfile <- unzip(tmp, "ningaloov4.mdb")
-dbfile <- "data/ningaloov4.mdb"
+if (refresh_data) {
+  tmp <- tempfile(tmpdir="data")
+  download.file(resource_show(MDB_RID)$url, tmp)
+  dbfile <- unzip(tmp, "ningaloov4.mdb")
+} else {
+  dbfile <- "data/ningaloov4.mdb"
+}
 con <- mdb.get(dbfile, dateformat='%Y-%m-%d', as.is=T)
 contents(con)
 ```
@@ -434,8 +438,49 @@ Upload outputs to CKAN.
 ```
 
 # Cleanup
-Close the temporary file.
+Close the temporary file if we're using a freshly downloaded copy.
 ```{r}
-unlink(tmp)
-file.remove(dbfile)
+if (refresh_data) {
+  unlink(tmp)
+  file.remove(dbfile)
+}
 ```
+
+
+# Selecting data
+Data are only of interest for further analysis if the survey effort has been 
+comprehesive enough.
+
+In particular, the only relevant surveys are those from comprehensively surveyed sections.
+
+For each survey day, we want to know which sections to exclude.
+from surveys: date, section, tally of subsections
+vs
+frmo sites: section, tally of subsections in section
+
+
+```{r}
+subsection_count <- sites %>% 
+  group_by(section) %>% 
+  tally(sort=F) %>% 
+  rename(no_subsections_existing = n)
+subsection_count
+
+survey_completeness <- surveys %>% group_by(section, date) %>% 
+  tally(sort=F) %>% 
+  ungroup() %>% 
+  filter(!is.na(section) & section!="") %>%
+  left_join(subsection_count, by = "section") %>%
+  filter(!is.na(no_subsections_existing)) %>%
+  rename(no_subsections_surveyed = n) %>%  
+  mutate(all_surveyed = ifelse(no_subsections_surveyed < no_subsections_existing, F, T))
+DT::datatable(survey_completeness)
+```
+
+Next: 
+
+* join `summary_nests` with `survey_completeness`
+* s1 = `all_surveyed`==T, Only surveys of sections which had all of their subsections surveyed on one day
+* s2 = `all_surveyed`==F, All but the above
+
+nest and crawl tallies for s1 per day and division, per section (are they moving?)
