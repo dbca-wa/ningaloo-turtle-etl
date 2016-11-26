@@ -6,21 +6,9 @@
 #
 #    http://shiny.rstudio.com/
 #
-
-library(shiny)
-# library(tidyverse)
-# require(Hmisc)
-library(leaflet)
-library(jsonlite)
-library(lubridate)
-library(stringr)
-library(httr)
-# require(ckanr)
-library(DT)
-# require(mapview)
-library(rgdal)
-library(sp)
-source("setup.R")
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(shiny, leaflet, jsonlite, lubridate, stringr, httr, DT, rgdal, sp)
+if (file.exists("setup.R")) source("setup.R")
 
 #' Prepare a DT datatable with sensible defaults
 make_dt <- function(x, filter="top", pageLength=10){
