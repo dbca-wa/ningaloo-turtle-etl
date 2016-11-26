@@ -42,22 +42,20 @@ ui <-   navbarPage(
            div(class="outer",
                tags$head(includeCSS("style.css")),
                leafletOutput("map", width="100%", height="100%"),
-               # absolutePanel(
-               #   id = "controls", class = "panel panel-default",
-               #   fixed = TRUE, draggable = TRUE,
-               #   top = 120, left = "auto", right = 20, bottom = "auto",
-               #   width = 280, height = "auto",
-               #
-               #   # h3("Timeseries"),
-
-               # ) # absolutePanel
-               uiOutput("tally_plots")
+               absolutePanel(
+                 id = "controls", class = "panel panel-default",
+                 fixed = TRUE, draggable = TRUE,
+                 top = "auto", left = 20, right = "auto", bottom = 20,
+                 width = "400", height = "auto",
+                 uiOutput("siteSelector"),
+                 uiOutput("tally_plots")
+               ) # absolutePanel
            ) # div.outer
   ), # tabPanel Map
-  tabPanel("Tally", DT::dataTableOutput("tally_data")),
-  tabPanel("Timeseries", uiOutput("plot_fullscreen")),
+  tabPanel("Data", DT::dataTableOutput("tally_data")),
+  tabPanel("Plots", uiOutput("plot_fullscreen")),
   tabPanel("About", includeMarkdown("README_TT.md"))
-)
+) # navbarPage
 
 
 # Define server logic required to draw a histogram
@@ -65,8 +63,10 @@ server <- function(input, output) {
   output$map <- renderLeaflet({
     leaflet() %>%
       addProviderTiles("OpenStreetMap.Mapnik") %>%
-      addProviderTiles("Esri.WorldImagery", options=providerTileOptions(opacity=0.8)) %>%
-      setView(lng = 115.2, lat = -21, zoom = 9) %>%
+      # addProviderTiles("Hydda.Full") %>%
+      addProviderTiles("Esri.WorldImagery",
+                       options=providerTileOptions(opacity=0.8, reuseTiles=T)) %>%
+      setView(lng = 113.8705194, lat = -22.3820194, zoom = 7) %>%
       addMiniMap(toggleDisplay=T, zoomLevelOffset=-5) %>%
       addScaleBar() %>%
       clearShapes()
@@ -136,12 +136,43 @@ server <- function(input, output) {
     d
   })
 
+  # Offer filter values
+  output$siteSelector <- renderUI({
+    selectInput("sitepicker",
+                "Show location:",
+                c("All", "Thevenard", "Montebello", "Perth")
+                # selected="Thevenard"
+                )
+  })
 
-
+  # Observe sitepicker, pan&zoom map
   observe({
+    s <- input$sitepicker
+    if (is.null(s)) return(NULL)
+    if (s=="All") leafletProxy("map") %>%
+      leaflet::setView(112.7628562, -24.9451404, 5)
+    if (s=="Thevenard") leafletProxy("map") %>%
+      leaflet::setView(114.9892322, -21.4587209, 14)
+    if (s=="Montebello") leafletProxy("map") %>%
+      leaflet::setView(115.0484288, -20.7507355, 10)
+    if (s=="Perth") leafletProxy("map") %>%
+      leaflet::setView(115.3151572, -32.1036489, 10)
+  })
+
+  # Observe data sitepicker, return filtered data
+  filteredData <- reactive({
     d <- data()
+    if (is.null(d) || is.null(input$sitepicker)) return(NULL)
+    if (input$sitepicker=="All") return(d)
+    filter(d, location==input$sitepicker)
+  })
+
+  # Observe filtered data, draw filtered data on map
+  observe({
+    d <- filteredData()
     if (is.null(d)) return(NULL)
     leafletProxy("map", data=d) %>%
+      clearShapes() %>%
       addAwesomeMarkers(d$longitude,
                         d$latitude,
                         # clusterOptions=T,
@@ -151,28 +182,18 @@ server <- function(input, output) {
                                     "</h4>", "<p>", d$observation_date, "</p>"))
   })
 
-  output$tally_data <- make_dt(data())
+  # Observe filtered data, return datatable
   output$tally_data <- renderDataTable({
-    d <- data()
+    d <- filteredData()
     if (is.null(d)) return(NULL)
     tally_data <- d %>%
-      group_by(location, observation_date, species, nest_age) %>%
+      group_by(location, observation_date, species, nest_age, nest_type) %>%
       tally(sort=F) %>%
       ungroup()
     DT::datatable(tally_data, filter="top")
   })
 
-
-  filteredData <- reactive({
-    d <- data()
-    # d <- filteredData()
-    if (is.null(d)) return(NULL)
-    # filter(d, location=="Thevenard Is")
-    d
-  })
-
   output$tally_plot <- renderPlot({
-    # d <- data()
     d <- filteredData()
     if (is.null(d)) return(NULL)
     tally_fresh <- d %>%
@@ -185,25 +206,18 @@ server <- function(input, output) {
       geom_point() +
       geom_line() +
       facet_wrap(~species, ncol=1) +
-      ggtitle("Timeseries (all locations)")
+      ggtitle(paste("Timeseries", input$sitepicker))
     plt
   })
 
   output$tally_plots <- renderUI({
-    d <- data()
+    d <- filteredData()
     if (is.null(d)) return(NULL)
-    absolutePanel(
-      id = "ordinationplot", class = "panel panel-default",
-      fixed = TRUE, draggable = TRUE, cursor="move",
-      top = "auto", left = 20, right = "auto", bottom = 20,
-      width = "450", height = "auto",
-      plotOutput("tally_plot")
-    )
+    plotOutput("tally_plot")
   })
 
   output$fullscreen_plots <- renderPlot({
-    d <- data()
-    # d <- filteredData()
+    d <- filteredData()
     if (is.null(d)) return(NULL)
     tally_fresh <- d %>%
       filter(d$nest_age=="fresh") %>%
@@ -215,12 +229,12 @@ server <- function(input, output) {
       geom_point() +
       geom_line() +
       facet_wrap(c("species", "location"), ncol=3) +
-      ggtitle("Turtle Tracks")
+      ggtitle(paste("Timeseries", input$sitepicker))
     plt
   })
 
   output$plot_fullscreen <- renderUI({
-    d <- data()
+    d <- filteredData()
     if (is.null(d)) return(NULL)
     plotOutput("fullscreen_plots")
   })
