@@ -1,12 +1,12 @@
 ---
 title: "Turtle Tracks"
 author: "Florian Mayer"
-date: "19 November 2016"
+date: "27 November 2016"
 output: html_document
 ---
 
-```{r setup, include=FALSE, message=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo=FALSE, include=FALSE, message=FALSE, warning=FALSE)
 # install.packages("tidyverse")
 library(tidyverse)
 require(Hmisc)
@@ -22,26 +22,168 @@ require(sp)
 source("setup.R")
 ```
 
-## Using downloaded data
+## Data flow
+This workbook is compiled and published manually after each batch of data has been
+uploaded from the field data collection devices.
+The last section displays the currency of the data used here.
 
 The track counts can be manually downloaded from the respective
-[Google Fusion Table](https://fusiontables.google.com/DataSource?docid=1wL_dSRNuUCyukJjiUo8RDvFQ0ejWoRpJo2p3S5Rm#map:id=6).
+[Google Fusion Table](https://fusiontables.google.com/DataSource?docid=1wL_dSRNuUCyukJjiUo8RDvFQ0ejWoRpJo2p3S5Rm#map:id=6) (GFT).
 
-This data view shows one row per track or nest count and each related damage observation.
+To use real-time data, data are loaded through the GFT API v2
+([reference](https://developers.google.com/fusiontables/docs/v2/reference/)).
+
+The GFT view we use shows one row for each combination of a track or nest count 
+and their related damage observation.
 If a nest has several damage observations, the track or nest details are repeated.
 
+```{r loaddata_api}
+api_call <- paste0(
+  "https://www.googleapis.com/fusiontables/v2/query?",
+  "sql=select+*+from+", Sys.getenv("TABLE_ID"),
+  "&hdrs=true&typed=true&fields=columns%2Ckind%2Crows&",
+  "key=", Sys.getenv("GOOGLE_API_KEY"))
+res <- POST(api_call) 
+r <-  res %>% content("parsed")
 
-```{r loaddata_csv, eval=F}
+# Column names
+cols <- unlist(r$columns)
+cols_1_last <- which(cols=="observed_at") - 1 # up until "observed_at"
+cols_2_first <- which(cols=="observed_at") + 2 # from after "details:observed_at:Accuracy"
+cols_1 <- cols[1:cols_1_last]
+cols_location <- c("featureclass", "longitude", "latitude", "altitude", "accuracy")
+cols_2 <- cols[cols_2_first:length(cols)]
+final_cols <- c(cols_1, cols_location, cols_2) %>%
+  str_replace_all(pattern="-", replacement="_") %>%
+  str_replace_all(pattern="\\*", replacement="")
+
+# Build tibble
+d_tbl <- tbl_df(matrix(unlist(r$rows), nrow=length(r$rows), byrow=T))
+colnames(d_tbl) <- final_cols
+
+# Tidy data types
+ord <- c("mdYHMOS")
+utc <- "UTC"
+gmt08 <- "Australia/Perth"
+d <- d_tbl %>% mutate(
+    id = meta_instance_id,
+    meta_submission_date = parse_date_time(meta_submission_date, orders=ord, tz=utc),
+    meta_date_marked_as_complete = parse_date_time(meta_date_marked_as_complete, orders=ord, tz=utc),
+    observation_start_time = parse_date_time(observation_start_time, orders=ord, tz=utc),
+    observation_end_time = parse_date_time(observation_end_time, orders=ord, tz=utc),
+    observation_date=as_date(with_tz(meta_submission_date, gmt08)),
+    longitude = as.numeric(longitude),
+    latitude = as.numeric(latitude),
+    altitude = as.numeric(altitude),
+    accuracy = as.numeric(accuracy),
+    location="WA"
+  ) 
+
+# Metadata on data currency
+data_retrieved_on <- with_tz(parse_date_time(res$headers$date, orders=c("adbYHMS"), tz=utc), gmt08)
+no_observations <- nrow(d)
+latest_observation <- with_tz(max(d$observation_start_time), gmt08)
+
+# Location Thevenard
+thv_gj <-'{"type":"Polygon","coordinates":[[[114.96591567993163,-21.459618983795107],[114.97810363769531,-21.448435280495215],[115.00711441040039,-21.445719108809797],[115.02616882324219,-21.451630711830703],[115.03131866455078,-21.45913969982141],[115.01981735229491,-21.46952383302392],[114.9715805053711,-21.46712756027387],[114.96591567993163,-21.459618983795107]]]}'
+
+# Location Montebello Barrow Islands
+mbi_gj <- '{"type": "Polygon", "coordinates": [[[115.4693989900401, -20.29396276971719], [115.5097316791225, -20.27460307895765], [115.6517027446924, -20.33106884367298], [115.7146217396609, -20.51821252101519], [115.6226632085531, -20.55693190253427], [115.6258898236797, -20.7731151160158], [115.5791039043441, -20.78602157652216], [115.5339312925719, -20.69406304541435], [115.446812684154, -20.67147673952822], [115.3290412320334, -20.82635426560454], [115.3709872286791, -20.85700710930714], [115.47423891273, -20.88443333788316], [115.5403845228251, -20.86023372443373], [115.5387712152618, -21.19418839003579], [115.3968001496918, -21.19741500516238], [115.3242013093435, -21.0941633211115], [115.3274279244701, -21.00543140513028], [115.233856085799, -20.87314018494009], [115.2661222370649, -20.7731151160158], [115.261282314375, -20.73923565718661], [115.3387210774132, -20.68438320003458], [115.4048666875083, -20.54725205715451], [115.3822803816222, -20.50046613781895], [115.4129332253247, -20.44561368066692], [115.4371328387742, -20.31977569072991], [115.4693989900401, -20.29396276971719]]]}'
+
+# Location Greater Perth Area
+per_gj = '{"type":"Polygon","coordinates":[[[115.6365966796875,-31.653381399663985],[115.76293945312499,-31.63467554954133],[116.04858398437499,-31.924192605327708],[115.95520019531249,-32.26855544621476],[115.73547363281249,-32.42634016154639],[115.4168701171875,-32.01273389791075],[115.521240234375,-31.770207631866704],[115.6365966796875,-31.653381399663985]]]}'
+
+wgs84 = CRS('+proj=longlat +datum=WGS84 +no_defs')
+thv <- readOGR(thv_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
+mbi <- readOGR(mbi_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
+per <- readOGR(per_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
+d_sp <- SpatialPoints(coords=select(d, longitude, latitude), proj4string=wgs84)
+d_spdf <- SpatialPointsDataFrame(d_sp, data=d, proj4string=wgs84)
+
+# Infer observation locations through intersection
+d[which(!is.na(sp::over(x=d_sp, y=per))),]$location = "Perth"
+d[which(!is.na(sp::over(x=d_sp, y=thv))),]$location = "Thevenard"
+# d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"  # enable once data comes in
+```
+# All locations
+## Map
+```{r, include=TRUE, }
+library(leaflet)
+leaflet(d) %>% 
+  addProviderTiles("Esri.WorldImagery") %>% 
+  setView(lng=115.2, lat=-21, zoom=9) %>%
+  addAwesomeMarkers(~longitude, 
+                    ~latitude, 
+                    label=~species, 
+                    popup=~paste(nest_age, species, nest_type, observation_date))
+```
+
+## Data
+Observations tallied by observation date, species, and nest age:
+
+```{r tally, include=TRUE, }
+tally_data <- d %>%
+  group_by(location, observation_date, species, nest_age) %>%
+  tally(sort=F) %>%
+  ungroup()
+DT::datatable(tally_data, filter="top")
+```
+
+## Timeseries
+```{r plot_tally, include=TRUE, }
+ggplot(tally_data, aes(x=observation_date, y=n, colour=species)) +
+  geom_point() + geom_line() + facet_wrap(c("location", "species"), ncol=3)
+```
+
+## Fresh tracks data, all locations
+Observations of fresh tracks or nests, 
+tallied by observation date, species, and nest type:
+```{r tally_fresh, include=TRUE, }
+tally_fresh <- d %>%
+  filter(nest_age=="fresh") %>%
+  group_by(location, observation_date, species, nest_type) %>%
+  tally(sort=F) %>%
+  ungroup()
+DT::datatable(tally_fresh, filter="top")
+```
+
+## Fresh tracks timeseries, Thevenard
+
+```{r plot_tally_fresh_thv, include=TRUE, }
+ggplot(filter(tally_fresh, location=="Thevenard"), aes(x=observation_date, y=n, colour=nest_type)) +
+  geom_point() + geom_line() + facet_wrap(~species, ncol=2) + ggtitle("Thevenard Island Turtle Tracks")
+```
+
+**`r no_observations` observations retrieved on `r data_retrieved_on` GMT+08, latest
+observation on `r latest_observation` GMT+08.**
+
+**Note** Track and nest counts within the tagging sector (Jetty to Chevron) 
+from the night of 20/11/2016 to 21/11/2016 were not recorded
+in the ODK Collect app the morning after, as wind and foot traffic during the night
+rendered the tracks unreadable. The tracks and nests were recorded on paper data
+sheets and will turn up in the tagging database WAMTRAM2.
+
+November 20-22 were windy, and tracks on the south side of the western end were
+likely blown over. This will result in false absence of tracks on 20/11/2016-22/11/2016.
+Wind conditions after 22/11/2016 are unknown and may also decrease the number of 
+detected tracks.
+
+
+# Examples
+```{r include=FALSE}
+knitr::opts_chunk$set(eval=FALSE, echo=TRUE, include=TRUE)
+```
+
+The remainder of this workbook demonstrates the code behind the above analysis.
+
+### Loading CSV exported from Google Fusion Table
+```{r loaddata_csv}
 d_tbl <- tbl_df(read.csv("data/TrackCount 0.10View.csv", header=T, as.is=T))
 ```
 
-## Using live data from Google Fusion Tables
-To use real-time data, load the data through the Google Fusion Tables API v2
-([reference](https://developers.google.com/fusiontables/docs/v2/reference/)).
-
+### Using live data from Google Fusion Table API
 In a separate file `setup.R`, set the GFT table id and your authorised Google API key:
-
-```{r example_setenv, eval=F}
+```{r}
 Sys.setenv(GOOGLE_API_KEY="MY_API_KEY")
 Sys.setenv(TABLE_ID="MY_TABLE_ID")
 ```
@@ -61,13 +203,14 @@ later as a grouping variable.
 
 Test observations before the start of field work are excluded.
 
-```{r loaddata_api}
+```{r}
 api_call <- paste0(
   "https://www.googleapis.com/fusiontables/v2/query?",
   "sql=select+*+from+", Sys.getenv("TABLE_ID"),
   "&hdrs=true&typed=true&fields=columns%2Ckind%2Crows&",
   "key=", Sys.getenv("GOOGLE_API_KEY"))
-r <- POST(api_call) %>% content("parsed")
+res <- POST(api_call) 
+r <-  res %>% content("parsed")
 
 # Column names
 cols <- unlist(r$columns)
@@ -102,17 +245,14 @@ d <- d_tbl %>% mutate(
     accuracy = as.numeric(accuracy),
     location="WA"
   ) 
-
-# eve_of_fieldwork <- "2016-11-18"
-# %>% filter(observation_date>eve_of_fieldwork)
 ```
 
-## Filtering by location
+### Filtering by location
 For each area of interest, a polygon is defined, and a new column "location"
 is added with the location name set to whichever area of interest
 it is located in, or "WA" for any locations outside known areas of interest.
 
-```{r, message=F}
+```{r}
 thv_gj <-'{"type":"Polygon","coordinates":[[[114.96591567993163,-21.459618983795107],[114.97810363769531,-21.448435280495215],[115.00711441040039,-21.445719108809797],[115.02616882324219,-21.451630711830703],[115.03131866455078,-21.45913969982141],[115.01981735229491,-21.46952383302392],[114.9715805053711,-21.46712756027387],[114.96591567993163,-21.459618983795107]]]}'
 
 mbi_gj <- '{"type": "Polygon", "coordinates": [[[115.4693989900401, -20.29396276971719], [115.5097316791225, -20.27460307895765], [115.6517027446924, -20.33106884367298], [115.7146217396609, -20.51821252101519], [115.6226632085531, -20.55693190253427], [115.6258898236797, -20.7731151160158], [115.5791039043441, -20.78602157652216], [115.5339312925719, -20.69406304541435], [115.446812684154, -20.67147673952822], [115.3290412320334, -20.82635426560454], [115.3709872286791, -20.85700710930714], [115.47423891273, -20.88443333788316], [115.5403845228251, -20.86023372443373], [115.5387712152618, -21.19418839003579], [115.3968001496918, -21.19741500516238], [115.3242013093435, -21.0941633211115], [115.3274279244701, -21.00543140513028], [115.233856085799, -20.87314018494009], [115.2661222370649, -20.7731151160158], [115.261282314375, -20.73923565718661], [115.3387210774132, -20.68438320003458], [115.4048666875083, -20.54725205715451], [115.3822803816222, -20.50046613781895], [115.4129332253247, -20.44561368066692], [115.4371328387742, -20.31977569072991], [115.4693989900401, -20.29396276971719]]]}'
@@ -141,13 +281,8 @@ leaflet(d) %>%
 
 ```
 
-## Nesting effort
-The aim of this section is to visualise the sum of observed fresh and old tracks,
-grouped by species, and facet-wrapped by location.
-
-Observations tallied by observation date, species, and nest age:
-
-```{r tally}
+## Tally data
+```{r}
 tally_data <- d %>%
   group_by(location, observation_date, species, nest_age) %>%
   tally(sort=F) %>%
@@ -155,36 +290,8 @@ tally_data <- d %>%
 DT::datatable(tally_data, filter="top")
 ```
 
-
-```{r plot_tally, message=F, warning=F}
-ggplot(tally_data, aes(x=observation_date, y=n, colour=species)) +
-  geom_point() + geom_line() + facet_wrap(c("location", "species"))
-```
-
-
-Observations of fresh tracks or nests, 
-tallied by observation date, species, and nest type:
-```{r tally_fresh}
-tally_fresh <- d %>%
-  filter(nest_age=="fresh") %>%
-  group_by(location, observation_date, species, nest_type) %>%
-  tally(sort=F) %>%
-  ungroup()
-DT::datatable(tally_fresh, filter="top")
-```
-
-```{r plot_tally_fresh_thv, message=F}
-ggplot(filter(tally_fresh, location=="Thevenard Is"), aes(x=observation_date, y=n, colour=nest_type)) +
+## Plot timeseries
+```{r}
+ggplot(filter(tally_data, location=="Thevenard"), aes(x=observation_date, y=n, colour=nest_type)) +
   geom_point() + geom_line() + facet_wrap(~species, ncol=2) + ggtitle("Thevenard Island Turtle Tracks")
 ```
-
-**Note** Track and nest counts within the tagging sector (Jetty to Chevron) 
-from the night of 20/11/2016 to 21/11/2016 were not recorded
-in the ODK Collect app the morning after, as wind and foot traffic during the night
-rendered the tracks unreadable. The tracks and nests were recorded on paper data
-sheets and will turn up in the tagging database WAMTRAM2.
-
-November 20-22 were windy, and tracks on the south side of the western end were
-likely blown over. This will result in false absence of tracks on 20/11/2016-22/11/2016.
-Wind conditions after 22/11/2016 are unknown and may also decrease the number of 
-detected tracks.

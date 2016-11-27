@@ -7,7 +7,7 @@
 #    http://shiny.rstudio.com/
 #
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(shiny, leaflet, jsonlite, lubridate, stringr, httr, DT, rgdal, sp)
+pacman::p_load(shiny, tidyverse, leaflet, jsonlite, lubridate, stringr, httr, DT, rgdal, sp)
 if (file.exists("setup.R")) source("setup.R")
 
 #' Prepare a DT datatable with sensible defaults
