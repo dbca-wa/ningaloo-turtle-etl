@@ -7,7 +7,9 @@
 #    http://shiny.rstudio.com/
 #
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(shiny, tidyverse, leaflet, jsonlite, lubridate, stringr, httr, DT, rgdal, sp)
+pacman::p_load(shiny, tidyverse, leaflet, jsonlite, lubridate, stringr, httr, DT,
+               geojsonio, sp)
+
 if (file.exists("setup.R")) source("setup.R")
 
 #' Prepare a DT datatable with sensible defaults
@@ -123,9 +125,9 @@ server <- function(input, output) {
       per_gj = '{"type":"Polygon","coordinates":[[[115.6365966796875,-31.653381399663985],[115.76293945312499,-31.63467554954133],[116.04858398437499,-31.924192605327708],[115.95520019531249,-32.26855544621476],[115.73547363281249,-32.42634016154639],[115.4168701171875,-32.01273389791075],[115.521240234375,-31.770207631866704],[115.6365966796875,-31.653381399663985]]]}'
 
       wgs84 = CRS('+proj=longlat +datum=WGS84 +no_defs')
-      thv <- readOGR(thv_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
-      mbi <- readOGR(mbi_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
-      per <- readOGR(per_gj, "OGRGeoJSON", p4s='+proj=longlat +datum=WGS84 +no_defs')
+      thv <- geojson_sp(geojsonio::as.json(thv_gj))
+      mbi <- geojson_sp(geojsonio::as.json(mbi_gj))
+      per <- geojson_sp(geojsonio::as.json(per_gj))
       d_sp <- SpatialPoints(coords=select(d, longitude, latitude), proj4string=wgs84)
       d_spdf <- SpatialPointsDataFrame(d_sp, data=d, proj4string=wgs84)
 
