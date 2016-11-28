@@ -20,33 +20,15 @@ require(mapview)
 require(rgdal)
 require(sp)
 source("setup.R")
-```
 
-## Data flow
-This workbook is compiled and published manually after each batch of data has been
-uploaded from the field data collection devices.
-The last section displays the currency of the data used here.
-
-The track counts can be manually downloaded from the respective
-[Google Fusion Table](https://fusiontables.google.com/DataSource?docid=1wL_dSRNuUCyukJjiUo8RDvFQ0ejWoRpJo2p3S5Rm#map:id=6) (GFT).
-
-To use real-time data, data are loaded through the GFT API v2
-([reference](https://developers.google.com/fusiontables/docs/v2/reference/)).
-
-The GFT view we use shows one row for each combination of a track or nest count 
-and their related damage observation.
-If a nest has several damage observations, the track or nest details are repeated.
-
-```{r loaddata_api}
+# Stream data from GFT API v2
 api_call <- paste0(
-  "https://www.googleapis.com/fusiontables/v2/query?",
-  "sql=select+*+from+", Sys.getenv("TABLE_ID"),
-  "&hdrs=true&typed=true&fields=columns%2Ckind%2Crows&",
-  "key=", Sys.getenv("GOOGLE_API_KEY"))
+  "https://www.googleapis.com/fusiontables/v2/query?sql=select+*+from+", Sys.getenv("TABLE_ID"),
+  "&hdrs=true&typed=true&fields=columns%2Ckind%2Crows&key=", Sys.getenv("GOOGLE_API_KEY"))
 res <- POST(api_call) 
 r <-  res %>% content("parsed")
 
-# Column names
+# Modify column names
 cols <- unlist(r$columns)
 cols_1_last <- which(cols=="observed_at") - 1 # up until "observed_at"
 cols_2_first <- which(cols=="observed_at") + 2 # from after "details:observed_at:Accuracy"
@@ -104,58 +86,35 @@ d_spdf <- SpatialPointsDataFrame(d_sp, data=d, proj4string=wgs84)
 d[which(!is.na(sp::over(x=d_sp, y=per))),]$location = "Perth"
 d[which(!is.na(sp::over(x=d_sp, y=thv))),]$location = "Thevenard"
 # d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"  # enable once data comes in
-```
-# All locations
-## Map
-```{r, include=TRUE, }
-library(leaflet)
-leaflet(d) %>% 
-  addProviderTiles("Esri.WorldImagery") %>% 
-  setView(lng=115.2, lat=-21, zoom=9) %>%
-  addAwesomeMarkers(~longitude, 
-                    ~latitude, 
-                    label=~species, 
-                    popup=~paste(nest_age, species, nest_type, observation_date))
-```
 
-## Data
-Observations tallied by observation date, species, and nest age:
-
-```{r tally, include=TRUE, }
+# Tally all tracks
 tally_data <- d %>%
   group_by(location, observation_date, species, nest_age) %>%
   tally(sort=F) %>%
   ungroup()
-DT::datatable(tally_data, filter="top")
-```
 
-## Timeseries
-```{r plot_tally, include=TRUE, }
-ggplot(tally_data, aes(x=observation_date, y=n, colour=species)) +
-  geom_point() + geom_line() + facet_wrap(c("location", "species"), ncol=3)
-```
-
-## Fresh tracks data, all locations
-Observations of fresh tracks or nests, 
-tallied by observation date, species, and nest type:
-```{r tally_fresh, include=TRUE, }
+# Tally only "fresh" tracks
 tally_fresh <- d %>%
   filter(nest_age=="fresh") %>%
   group_by(location, observation_date, species, nest_type) %>%
   tally(sort=F) %>%
   ungroup()
-DT::datatable(tally_fresh, filter="top")
 ```
+**`r no_observations` observations were retrieved on `r data_retrieved_on` GMT+08.**
 
-## Fresh tracks timeseries, Thevenard
+**The latest retrieved observation happened on `r latest_observation` GMT+08.**
 
+This workbook is compiled and published manually after each batch of data has been
+uploaded from the field data collection devices.
+
+Results are shown first; the analysis is explained below.
+
+# Thevenard
 ```{r plot_tally_fresh_thv, include=TRUE, }
 ggplot(filter(tally_fresh, location=="Thevenard"), aes(x=observation_date, y=n, colour=nest_type)) +
-  geom_point() + geom_line() + facet_wrap(~species, ncol=2) + ggtitle("Thevenard Island Turtle Tracks")
+  geom_point() + geom_line() + facet_wrap(~species, ncol=2) + 
+  ggtitle("Thevenard Island Fresh Turtle Tracks")
 ```
-
-**`r no_observations` observations retrieved on `r data_retrieved_on` GMT+08, latest
-observation on `r latest_observation` GMT+08.**
 
 **Note** Track and nest counts within the tagging sector (Jetty to Chevron) 
 from the night of 20/11/2016 to 21/11/2016 were not recorded
@@ -168,13 +127,56 @@ likely blown over. This will result in false absence of tracks on 20/11/2016-22/
 Wind conditions after 22/11/2016 are unknown and may also decrease the number of 
 detected tracks.
 
+# All locations
+```{r, include=TRUE}
+library(leaflet)
+leaflet(d) %>% 
+  addProviderTiles("Esri.WorldImagery") %>% 
+  setView(lng=115.2, lat=-21, zoom=9) %>%
+  addAwesomeMarkers(
+    ~longitude, ~latitude, label=~species, 
+    popup=~paste(nest_age, species, nest_type, observation_date))
+```
 
-# Examples
+Observations tallied by observation date, species, and nest age:
+
+```{r tally, include=TRUE}
+DT::datatable(tally_data, filter="top")
+```
+
+## Old and fresh tracks
+```{r plot_tally, include=TRUE}
+ggplot(tally_data, aes(x=observation_date, y=n, colour=species)) +
+  geom_point() + geom_line() + facet_wrap(c("location", "species"), ncol=3)
+```
+
+## Fresh tracks only
+Observations of fresh tracks or nests, 
+tallied by observation date, species, and nest type:
+```{r tally_fresh, include=TRUE}
+DT::datatable(tally_fresh, filter="top")
+```
+
+# Workflow
+The remainder of the document document and explain the analytical workflow,
+aiming to make this analysis transparent to those relying on the insight gained,
+and serve as working examples for other analysts.
+
 ```{r include=FALSE}
 knitr::opts_chunk$set(eval=FALSE, echo=TRUE, include=TRUE)
 ```
 
 The remainder of this workbook demonstrates the code behind the above analysis.
+
+The track counts can be manually downloaded from the respective
+[Google Fusion Table](https://fusiontables.google.com/DataSource?docid=1wL_dSRNuUCyukJjiUo8RDvFQ0ejWoRpJo2p3S5Rm#map:id=6) (GFT), or streamed through the GFT API (v2)
+([reference](https://developers.google.com/fusiontables/docs/v2/reference/)).
+
+The GFT view we use shows one row for each combination of a track or nest count 
+and their related damage observation.
+If a nest has several damage observations, the track or nest details are repeated.
+To date, no nest has shown two or more distinct sources of disturbance or damage,
+so there are no duplicate observations yet.
 
 ### Loading CSV exported from Google Fusion Table
 ```{r loaddata_csv}
@@ -291,7 +293,9 @@ DT::datatable(tally_data, filter="top")
 ```
 
 ## Plot timeseries
+The `filter()` statement restricts the data here to one location.
 ```{r}
 ggplot(filter(tally_data, location=="Thevenard"), aes(x=observation_date, y=n, colour=nest_type)) +
-  geom_point() + geom_line() + facet_wrap(~species, ncol=2) + ggtitle("Thevenard Island Turtle Tracks")
+  geom_point() + geom_line() + facet_wrap(~species, ncol=2) + 
+  ggtitle("Thevenard Island Turtle Tracks")
 ```

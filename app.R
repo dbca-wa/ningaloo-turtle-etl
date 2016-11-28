@@ -36,7 +36,10 @@ ui <-   navbarPage(
                  fixed = TRUE, draggable = TRUE,
                  top = "auto", left = 20, right = "auto", bottom = 20,
                  width = "400", height = "auto",
+                 h3("Filter data"),
                  uiOutput("siteSelector"),
+                 uiOutput("trackAgeSelector"),
+                 uiOutput("trackTypeSelector"),
                  uiOutput("tally_plots")
                ) # absolutePanel
            ) # div.outer
@@ -68,7 +71,8 @@ server <- function(input, output) {
         "sql=select+*+from+", Sys.getenv("TABLE_ID"),
         "&hdrs=true&typed=true&fields=columns%2Ckind%2Crows&",
         "key=", Sys.getenv("GOOGLE_API_KEY"))
-      r <- POST(api_call) %>% content("parsed")
+      res <- POST(api_call)
+      r <-  res %>% content("parsed")
 
       # Column names
       cols <- unlist(r$columns)
@@ -104,10 +108,18 @@ server <- function(input, output) {
         location="WA"
       )
 
+      # Metadata on data currency
+      data_retrieved_on <- with_tz(parse_date_time(res$headers$date, orders=c("adbYHMS"), tz=utc), gmt08)
+      no_observations <- nrow(d)
+      latest_observation <- with_tz(max(d$observation_start_time), gmt08)
+
+      # Location Thevenard
       thv_gj <-'{"type":"Polygon","coordinates":[[[114.96591567993163,-21.459618983795107],[114.97810363769531,-21.448435280495215],[115.00711441040039,-21.445719108809797],[115.02616882324219,-21.451630711830703],[115.03131866455078,-21.45913969982141],[115.01981735229491,-21.46952383302392],[114.9715805053711,-21.46712756027387],[114.96591567993163,-21.459618983795107]]]}'
 
+      # Location Montebello Barrow Islands
       mbi_gj <- '{"type": "Polygon", "coordinates": [[[115.4693989900401, -20.29396276971719], [115.5097316791225, -20.27460307895765], [115.6517027446924, -20.33106884367298], [115.7146217396609, -20.51821252101519], [115.6226632085531, -20.55693190253427], [115.6258898236797, -20.7731151160158], [115.5791039043441, -20.78602157652216], [115.5339312925719, -20.69406304541435], [115.446812684154, -20.67147673952822], [115.3290412320334, -20.82635426560454], [115.3709872286791, -20.85700710930714], [115.47423891273, -20.88443333788316], [115.5403845228251, -20.86023372443373], [115.5387712152618, -21.19418839003579], [115.3968001496918, -21.19741500516238], [115.3242013093435, -21.0941633211115], [115.3274279244701, -21.00543140513028], [115.233856085799, -20.87314018494009], [115.2661222370649, -20.7731151160158], [115.261282314375, -20.73923565718661], [115.3387210774132, -20.68438320003458], [115.4048666875083, -20.54725205715451], [115.3822803816222, -20.50046613781895], [115.4129332253247, -20.44561368066692], [115.4371328387742, -20.31977569072991], [115.4693989900401, -20.29396276971719]]]}'
 
+      # Location Greater Perth Area
       per_gj = '{"type":"Polygon","coordinates":[[[115.6365966796875,-31.653381399663985],[115.76293945312499,-31.63467554954133],[116.04858398437499,-31.924192605327708],[115.95520019531249,-32.26855544621476],[115.73547363281249,-32.42634016154639],[115.4168701171875,-32.01273389791075],[115.521240234375,-31.770207631866704],[115.6365966796875,-31.653381399663985]]]}'
 
       wgs84 = CRS('+proj=longlat +datum=WGS84 +no_defs')
@@ -117,6 +129,7 @@ server <- function(input, output) {
       d_sp <- SpatialPoints(coords=select(d, longitude, latitude), proj4string=wgs84)
       d_spdf <- SpatialPointsDataFrame(d_sp, data=d, proj4string=wgs84)
 
+      # Reverse geocode observation locations
       d[which(!is.na(sp::over(x=d_sp, y=per))),]$location = "Perth"
       d[which(!is.na(sp::over(x=d_sp, y=thv))),]$location = "Thevenard"
       # d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"  # enable once data comes in
@@ -128,10 +141,23 @@ server <- function(input, output) {
   # Offer filter values
   output$siteSelector <- renderUI({
     selectInput("sitepicker",
-                "Show location:",
-                c("All", "Thevenard", "Montebello", "Perth")
-                # selected="Thevenard"
-                )
+                "Location",
+                c("all", "Thevenard", "Montebello", "Perth"))
+  })
+
+  output$trackAgeSelector <- renderUI({
+    selectInput("trackagepicker",
+                "Recentness",
+                c("all", "old", "fresh")
+    )
+  })
+
+  output$trackTypeSelector <- renderUI({
+    selectInput("tracktypepicker",
+                "Type",
+                c("all", "falsecrawl", "successfulcrawl", "trackunsure",
+                  "tracknotassessed", "nest", "hatchednest")
+    )
   })
 
   # Observe sitepicker, pan&zoom map
@@ -151,9 +177,14 @@ server <- function(input, output) {
   # Observe data sitepicker, return filtered data
   filteredData <- reactive({
     d <- data()
-    if (is.null(d) || is.null(input$sitepicker)) return(NULL)
-    if (input$sitepicker=="All") return(d)
-    filter(d, location==input$sitepicker)
+    if (is.null(d)) return(NULL)
+    if (!is.null(input$sitepicker) && input$sitepicker!="all") {
+      d <- filter(d, location==input$sitepicker)}
+    if (!is.null(input$trackagepicker) && input$trackagepicker!="all") {
+      d <- filter(d, nest_age==input$trackagepicker)}
+    if (!is.null(input$tracktypepicker) && input$tracktypepicker!="all") {
+      d <- filter(d, nest_type==input$tracktypepicker)}
+    d
   })
 
   # Observe filtered data, draw filtered data on map
@@ -186,7 +217,6 @@ server <- function(input, output) {
     d <- filteredData()
     if (is.null(d)) return(NULL)
     tally_fresh <- d %>%
-      filter(nest_age=="fresh") %>%
       group_by(observation_date, species, nest_type) %>%
       tally(sort=F) %>%
       ungroup()
