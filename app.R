@@ -6,9 +6,17 @@
 #
 #    http://shiny.rstudio.com/
 #
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(shiny, tidyverse, leaflet, jsonlite, lubridate, stringr, httr, DT,
-               geojsonio, sp)
+# if (!require("pacman")) install.packages("pacman")
+# pacman::p_load(shiny, tidyverse, httr, stringr, lubridate, leaflet, DT, geojsonio, sp)
+library(shiny)
+library(httr)
+library(stringr)
+library(lubridate)
+library(leaflet)
+library(DT)
+library(geojsonio)
+library(sp)
+
 
 if (file.exists("setup.R")) source("setup.R")
 
