@@ -143,6 +143,10 @@ server <- function(input, output) {
       d[which(!is.na(sp::over(x=d_sp, y=per))),]$location = "Perth"
       d[which(!is.na(sp::over(x=d_sp, y=thv))),]$location = "Thevenard"
       # d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"  # enable once data comes in
+
+      now = Sys.time() %>% str_replace_all(pattern=" |:", replacement="-")
+      write.csv(d, file=paste0("data/tracks_", now, ".csv"), row.names=FALSE)
+
     }) # end progress
 
     d
