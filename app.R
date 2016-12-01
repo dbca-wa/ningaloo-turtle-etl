@@ -9,6 +9,7 @@
 # if (!require("pacman")) install.packages("pacman")
 # pacman::p_load(shiny, tidyverse, httr, stringr, lubridate, leaflet, DT, geojsonio, sp)
 library(shiny)
+library(dplyr)
 library(httr)
 library(stringr)
 library(lubridate)
@@ -16,8 +17,7 @@ library(leaflet)
 library(DT)
 library(geojsonio)
 library(sp)
-
-
+library(ggplot2)
 if (file.exists("setup.R")) source("setup.R")
 
 #' Prepare a DT datatable with sensible defaults
