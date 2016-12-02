@@ -243,7 +243,7 @@ d <- d_tbl %>% mutate(
     meta_date_marked_as_complete = parse_date_time(meta_date_marked_as_complete, orders=ord, tz=utc),
     observation_start_time = parse_date_time(observation_start_time, orders=ord, tz=utc),
     observation_end_time = parse_date_time(observation_end_time, orders=ord, tz=utc),
-    observation_date=as_date(with_tz(meta_submission_date, gmt08)),
+    observation_date=as_date(with_tz(observation_start_time, gmt08)),
     longitude = as.numeric(longitude),
     latitude = as.numeric(latitude),
     altitude = as.numeric(altitude),

@@ -110,7 +110,7 @@ server <- function(input, output) {
         meta_date_marked_as_complete = parse_date_time(meta_date_marked_as_complete, orders=ord, tz=utc),
         observation_start_time = parse_date_time(observation_start_time, orders=ord, tz=utc),
         observation_end_time = parse_date_time(observation_end_time, orders=ord, tz=utc),
-        observation_date=as_date(with_tz(meta_submission_date, gmt08)),
+        observation_date=as_date(with_tz(observation_start_time, gmt08)),
         longitude = as.numeric(longitude),
         latitude = as.numeric(latitude),
         altitude = as.numeric(altitude),
@@ -142,10 +142,11 @@ server <- function(input, output) {
       # Reverse geocode observation locations
       d[which(!is.na(sp::over(x=d_sp, y=per))),]$location = "Perth"
       d[which(!is.na(sp::over(x=d_sp, y=thv))),]$location = "Thevenard"
-      # d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"  # enable once data comes in
+      d[which(!is.na(sp::over(x=d_sp, y=mbi))),]$location = "Montebello"
 
-      now = Sys.time() %>% str_replace_all(pattern=" |:", replacement="-")
-      write.csv(d, file=paste0("data/tracks_", now, ".csv"), row.names=FALSE)
+      # Save a snapshot to disk
+      # now = Sys.time() %>% str_replace_all(pattern=" |:", replacement="-")
+      # write.csv(d, file=paste0("data/tracks_", now, ".csv"), row.names=FALSE)
 
     }) # end progress
 
@@ -206,14 +207,14 @@ server <- function(input, output) {
     d <- filteredData()
     if (is.null(d)) return(NULL)
     leafletProxy("map", data=d) %>%
-      clearShapes() %>%
-      addAwesomeMarkers(d$longitude,
-                        d$latitude,
-                        # clusterOptions=T,
-                        group="Tracks & Nests",
-                        label=d$species,
-                        popup=paste("<h4>", d$nest_age, d$species, d$nest_type,
-                                    "</h4>", "<p>", d$observation_date, "</p>"))
+    clearShapes() %>%
+    addAwesomeMarkers(d$longitude,
+                      d$latitude,
+                      # clusterOptions=T,
+                      group="Tracks & Nests",
+                      label=d$species,
+                      popup=paste("<h4>", d$nest_age, d$species, d$nest_type,
+                                  "</h4>", "<p>", d$observation_date, "</p>"))
   })
 
   # Observe filtered data, return datatable
